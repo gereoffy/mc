@@ -71,7 +71,10 @@ static const char *const hostkey_method_ssh_ecdsa_384 = "ecdsa-sha2-nistp384";
 #ifdef LIBSSH2_KNOWNHOST_KEY_ECDSA_256
 static const char *const hostkey_method_ssh_ecdsa_256 = "ecdsa-sha2-nistp256";
 #endif
-static const char *const hostkey_method_ssh_rsa = "ssh-rsa";
+/* The same RSA key in known_hosts ("ssh-rsa") is used with the SHA-2 signature methods as well.
+ * Prefer them: newer servers don't offer the SHA-1 based "ssh-rsa" method anymore, and then
+ * another key type would be negotiated, which is not found in known_hosts. */
+static const char *const hostkey_method_ssh_rsa = "rsa-sha2-512,rsa-sha2-256,ssh-rsa";
 static const char *const hostkey_method_ssh_dss = "ssh-dss";
 
 static const char *default_hostkey_methods =
@@ -710,7 +713,59 @@ sftpfs_open_connection_ssh_agent (struct vfs_s_super *super, GError **mcerror)
 
 /* --------------------------------------------------------------------------------------------- */
 /**
+ * Authenticate with one SSH key file, asking for its passphrase if needed.
+ *
+ * @param super            connection data
+ * @param privkey          private key file
+ * @param pubkey           public key file or NULL to derive it from the private key
+ * @param ask_on_any_error ask for a passphrase on any failure, not only if the key can't be read
+ * @param mcerror          pointer to the error handler
+ * @return TRUE if connection was successfully opened, FALSE otherwise
+ */
+
+static gboolean
+sftpfs_open_connection_ssh_key_file (struct vfs_s_super *super, const char *privkey,
+                                     const char *pubkey, gboolean ask_on_any_error,
+                                     GError **mcerror)
+{
+    sftpfs_super_t *sftpfs_super = SFTP_SUPER (super);
+    char *p, *passwd;
+    gboolean ret_value = FALSE;
+    int rc;
+
+    rc = libssh2_userauth_publickey_fromfile (sftpfs_super->session, super->path_element->user,
+                                              pubkey, privkey, super->path_element->password);
+    if (rc == 0)
+        return TRUE;
+
+    /* For a key found by default name, ask for a passphrase only if the key file could not be
+     * read (most probably it is encrypted), not if the server just did not accept the key. */
+    if (!ask_on_any_error && rc != LIBSSH2_ERROR_FILE)
+        return FALSE;
+
+    p = g_strdup_printf (_ ("sftp: Enter passphrase for %s "), privkey);
+    passwd = vfs_get_password (p);
+    g_free (p);
+
+    if (passwd == NULL)
+        mc_propagate_error (mcerror, 0, "%s", _ ("sftp: Passphrase is empty."));
+    else
+    {
+        ret_value = (libssh2_userauth_publickey_fromfile (sftpfs_super->session,
+                                                          super->path_element->user, pubkey,
+                                                          privkey, passwd)
+                     == 0);
+        g_free (passwd);
+    }
+
+    return ret_value;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
  * Open connection to host using SSH-keypair.
+ *
+ * If no IdentityFile is configured for the host, try the default key files like ssh(1) does.
  *
  * @param super   connection data
  * @param mcerror pointer to the error handler
@@ -720,37 +775,34 @@ sftpfs_open_connection_ssh_agent (struct vfs_s_super *super, GError **mcerror)
 static gboolean
 sftpfs_open_connection_ssh_key (struct vfs_s_super *super, GError **mcerror)
 {
+    static const char *const default_keys[] = { "id_ed25519", "id_ecdsa", "id_rsa", NULL };
     sftpfs_super_t *sftpfs_super = SFTP_SUPER (super);
-    char *p, *passwd;
     gboolean ret_value = FALSE;
+    size_t i;
 
     mc_return_val_if_error (mcerror, FALSE);
 
     if ((sftpfs_super->auth_type & PUBKEY) == 0)
         return FALSE;
 
-    if (sftpfs_super->privkey == NULL)
-        return FALSE;
+    if (sftpfs_super->privkey != NULL)
+        return sftpfs_open_connection_ssh_key_file (super, sftpfs_super->privkey,
+                                                    sftpfs_super->pubkey, TRUE, mcerror);
 
-    if (libssh2_userauth_publickey_fromfile (sftpfs_super->session, super->path_element->user,
-                                             sftpfs_super->pubkey, sftpfs_super->privkey,
-                                             super->path_element->password)
-        == 0)
-        return TRUE;
-
-    p = g_strdup_printf (_ ("sftp: Enter passphrase for %s "), super->path_element->user);
-    passwd = vfs_get_password (p);
-    g_free (p);
-
-    if (passwd == NULL)
-        mc_propagate_error (mcerror, 0, "%s", _ ("sftp: Passphrase is empty."));
-    else
+    for (i = 0; !ret_value && default_keys[i] != NULL && *mcerror == NULL; i++)
     {
-        ret_value = (libssh2_userauth_publickey_fromfile (
-                         sftpfs_super->session, super->path_element->user, sftpfs_super->pubkey,
-                         sftpfs_super->privkey, passwd)
-                     == 0);
-        g_free (passwd);
+        char *privkey, *pubkey;
+
+        privkey = mc_build_filename (mc_config_get_home_dir (), ".ssh", default_keys[i],
+                                     (char *) NULL);
+        if (exist_file (privkey))
+        {
+            pubkey = g_strconcat (privkey, ".pub", (char *) NULL);
+            ret_value = sftpfs_open_connection_ssh_key_file (
+                super, privkey, exist_file (pubkey) ? pubkey : NULL, FALSE, mcerror);
+            g_free (pubkey);
+        }
+        g_free (privkey);
     }
 
     return ret_value;
