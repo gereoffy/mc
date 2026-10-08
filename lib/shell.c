@@ -284,7 +284,9 @@ mc_shell_init (void)
     if (mc_shell->type == SHELL_NONE)
         mc_shell_recognize_path (mc_shell);
 
-    if (mc_shell->type == SHELL_NONE)
+    /* A plain sh that could not be resolved to a known shell (e.g. /bin/sh on macOS,
+     * which is a standalone binary, not a symlink) is not supported as a subshell. */
+    if (mc_shell->type == SHELL_NONE || mc_shell->type == SHELL_SH)
         mc_global.tty.use_subshell = FALSE;
 
     mc_global.shell = mc_shell;
