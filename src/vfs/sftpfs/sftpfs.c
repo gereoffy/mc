@@ -211,13 +211,8 @@ sftpfs_cb_readdir (void *data)
     }
 
     sftpfs_dirent = sftpfs_readdir (data, &mcerror);
-    if (!mc_error_message (&mcerror, NULL))
-    {
-        if (sftpfs_dirent != NULL)
-            vfs_print_message (_ ("sftp: (Ctrl-G break) Listing... %s"), sftpfs_dirent->d_name);
-        else
-            vfs_print_message ("%s", _ ("sftp: Listing done."));
-    }
+    if (!mc_error_message (&mcerror, NULL) && sftpfs_dirent == NULL)
+        vfs_print_message ("%s", _ ("sftp: Listing done."));
 
     return sftpfs_dirent;
 }
@@ -776,6 +771,7 @@ sftpfs_free_archive (struct vfs_class *me, struct vfs_s_super *super)
     (void) me;
 
     sftpfs_close_connection (super, "Normal Shutdown", &mcerror);
+    sftpfs_readdir_attrs_reset (SFTP_SUPER (super));
 
     vfs_path_element_free (SFTP_SUPER (super)->original_connection_info);
 

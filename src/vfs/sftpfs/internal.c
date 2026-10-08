@@ -47,6 +47,9 @@ GString *sftpfs_filename_buffer = NULL;
 
 /*** file scope macro definitions ****************************************************************/
 
+// how long the attributes got with readdir() are used for lstat()
+#define SFTPFS_READDIR_ATTRS_TIMEOUT (3 * G_USEC_PER_SEC)
+
 /*** file scope type declarations ****************************************************************/
 
 /*** forward declarations (file scope functions) *************************************************/
@@ -274,6 +277,76 @@ sftpfs_attr_to_stat (const LIBSSH2_SFTP_ATTRIBUTES *attrs, struct stat *s)
 
 /* --------------------------------------------------------------------------------------------- */
 /**
+ * Forget the attributes kept from the last directory listing.
+ */
+
+void
+sftpfs_readdir_attrs_reset (sftpfs_super_t *super)
+{
+    if (super->readdir_attrs != NULL)
+    {
+        g_hash_table_destroy (super->readdir_attrs);
+        super->readdir_attrs = NULL;
+    }
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Keep the attributes of a directory entry got with readdir().
+ */
+
+void
+sftpfs_readdir_attrs_add (sftpfs_super_t *super, const char *dir, const char *name,
+                          const LIBSSH2_SFTP_ATTRIBUTES *attrs)
+{
+    size_t len;
+
+    // without the file type the entry is useless for lstat()
+    if ((attrs->flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) == 0)
+        return;
+
+    if (super->readdir_attrs == NULL)
+        super->readdir_attrs = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+
+    len = strlen (dir);
+    g_hash_table_replace (super->readdir_attrs,
+                          g_strconcat (dir, len != 0 && IS_PATH_SEP (dir[len - 1]) ? "" : PATH_SEP_STR,
+                                       name, (char *) NULL),
+                          g_memdup2 (attrs, sizeof (*attrs)));
+    super->readdir_attrs_time = g_get_monotonic_time ();
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Take the attributes of a file kept from the last directory listing, if they are recent enough.
+ * Each entry is used only once: the next lstat() of the same file asks the server again.
+ */
+
+static gboolean
+sftpfs_readdir_attrs_take (sftpfs_super_t *super, const char *path, LIBSSH2_SFTP_ATTRIBUTES *attrs)
+{
+    LIBSSH2_SFTP_ATTRIBUTES *cached;
+
+    if (super->readdir_attrs == NULL)
+        return FALSE;
+
+    if (g_get_monotonic_time () - super->readdir_attrs_time > SFTPFS_READDIR_ATTRS_TIMEOUT)
+    {
+        sftpfs_readdir_attrs_reset (super);
+        return FALSE;
+    }
+
+    cached = g_hash_table_lookup (super->readdir_attrs, path);
+    if (cached == NULL)
+        return FALSE;
+
+    *attrs = *cached;
+    g_hash_table_remove (super->readdir_attrs, path);
+    return TRUE;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
  * Getting information about a symbolic link.
  *
  * @param vpath   path to file, directory or symbolic link
@@ -290,7 +363,14 @@ sftpfs_lstat (const vfs_path_t *vpath, struct stat *buf, GError **mcerror)
     LIBSSH2_SFTP_ATTRIBUTES attrs;
     int res;
 
-    res = sftpfs_stat_init (&super, &path_element, vpath, mcerror, LIBSSH2_SFTP_LSTAT, &attrs);
+    if (sftpfs_op_init (&super, &path_element, vpath, mcerror)
+        && sftpfs_readdir_attrs_take (super, sftpfs_fix_filename (path_element->path)->str,
+                                      &attrs))
+        res = 0;
+    else
+        res = sftpfs_stat_init (&super, &path_element, vpath, mcerror, LIBSSH2_SFTP_LSTAT,
+                                &attrs);
+
     if (res >= 0)
     {
         sftpfs_attr_to_stat (&attrs, buf);
@@ -393,6 +473,8 @@ sftpfs_symlink (const vfs_path_t *vpath1, const vfs_path_t *vpath2, GError **mce
     if (!sftpfs_op_init (&super, &path_element2, vpath2, mcerror))
         return -1;
 
+    sftpfs_readdir_attrs_reset (super);
+
     ctmp_path = sftpfs_fix_filename (path_element2->path);
     tmp_path = g_strndup (ctmp_path->str, ctmp_path->len);
     tmp_path_len = ctmp_path->len;
@@ -440,6 +522,8 @@ sftpfs_utime (const vfs_path_t *vpath, time_t atime, time_t mtime, GError **mcer
     int res;
 
     res = sftpfs_stat_init (&super, &path_element, vpath, mcerror, LIBSSH2_SFTP_LSTAT, &attrs);
+    if (super != NULL)
+        sftpfs_readdir_attrs_reset (super);
     if (res < 0)
         return res;
 
@@ -493,6 +577,8 @@ sftpfs_chmod (const vfs_path_t *vpath, mode_t mode, GError **mcerror)
     int res;
 
     res = sftpfs_stat_init (&super, &path_element, vpath, mcerror, LIBSSH2_SFTP_LSTAT, &attrs);
+    if (super != NULL)
+        sftpfs_readdir_attrs_reset (super);
     if (res < 0)
         return res;
 
@@ -545,6 +631,8 @@ sftpfs_unlink (const vfs_path_t *vpath, GError **mcerror)
     if (!sftpfs_op_init (&super, &path_element, vpath, mcerror))
         return -1;
 
+    sftpfs_readdir_attrs_reset (super);
+
     fixfname = sftpfs_fix_filename (path_element->path);
 
     do
@@ -585,6 +673,8 @@ sftpfs_rename (const vfs_path_t *vpath1, const vfs_path_t *vpath2, GError **mcer
 
     if (!sftpfs_op_init (&super, &path_element2, vpath2, mcerror))
         return -1;
+
+    sftpfs_readdir_attrs_reset (super);
 
     ctmp_path = sftpfs_fix_filename (path_element2->path);
     tmp_path = g_strndup (ctmp_path->str, ctmp_path->len);

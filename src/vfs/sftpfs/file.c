@@ -156,6 +156,9 @@ sftpfs_open_file (vfs_file_handler_t *fh, int flags, mode_t mode, GError **mcerr
 
         sftp_open_mode = LIBSSH2_SFTP_S_IRUSR | LIBSSH2_SFTP_S_IWUSR | LIBSSH2_SFTP_S_IRGRP
             | LIBSSH2_SFTP_S_IROTH;
+
+        // the file is going to be changed
+        sftpfs_readdir_attrs_reset (super);
     }
     else
         sftp_open_flags = LIBSSH2_FXF_READ;
