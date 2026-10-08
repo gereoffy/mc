@@ -257,8 +257,65 @@ static char buffer[BUF_MEDIUM];
 static char *netrc = NULL;
 static const char *netrcp;
 
+/* Passwords typed in by the user, kept in memory for this mc session ("user@host:port" -> password),
+ * so they are not asked again after the connection was freed by the VFS timeout */
+static GHashTable *ftpfs_passwords = NULL;
+
 /* --------------------------------------------------------------------------------------------- */
 /*** file scope functions ************************************************************************/
+/* --------------------------------------------------------------------------------------------- */
+
+static char *
+ftpfs_password_key (const vfs_path_element_t *path_element)
+{
+    return g_strdup_printf ("%s@%s:%d", path_element->user, path_element->host,
+                            path_element->port);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+ftpfs_password_remember (const vfs_path_element_t *path_element, const char *password)
+{
+    if (ftpfs_passwords == NULL)
+        ftpfs_passwords =
+            g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify) wipe_password);
+
+    g_hash_table_replace (ftpfs_passwords, ftpfs_password_key (path_element), g_strdup (password));
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static const char *
+ftpfs_password_lookup (const vfs_path_element_t *path_element)
+{
+    char *key;
+    const char *password;
+
+    if (ftpfs_passwords == NULL)
+        return NULL;
+
+    key = ftpfs_password_key (path_element);
+    password = g_hash_table_lookup (ftpfs_passwords, key);
+    g_free (key);
+    return password;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+ftpfs_password_forget (const vfs_path_element_t *path_element)
+{
+    char *key;
+
+    if (ftpfs_passwords == NULL)
+        return;
+
+    key = ftpfs_password_key (path_element);
+    g_hash_table_remove (ftpfs_passwords, key);
+    g_free (key);
+}
+
 /* --------------------------------------------------------------------------------------------- */
 
 static void
@@ -537,7 +594,10 @@ ok:
         status = ftpfs_get_reply (me, ftp_super->sock,
                                   (wait_reply & WANT_STRING) != 0 ? reply_str : NULL,
                                   sizeof (reply_str) - 1);
-        if ((wait_reply & WANT_STRING) != 0 && !retry && level == 0 && code == 421)
+        /* 421 means the server has closed the control connection, e.g. after an idle
+         * timeout. Reconnect and resend the command whatever kind of reply it waits for,
+         * otherwise the first command after a timeout (usually CWD) fails. */
+        if (!retry && level == 0 && code == 421)
         {
             retry = TRUE;
             level = 1;
@@ -630,6 +690,11 @@ ftpfs_login_server (struct vfs_class *me, struct vfs_s_super *super, const char 
         op = g_strdup (ftpfs_anonymous_passwd);
         anon = TRUE;
     }
+    else if (ftpfs_password_lookup (super->path_element) != NULL)  // typed in earlier
+    {
+        op = g_strdup (ftpfs_password_lookup (super->path_element));
+        super->path_element->password = g_strdup (op);
+    }
     else
     {  // ask user
         char *p;
@@ -706,12 +771,15 @@ ftpfs_login_server (struct vfs_class *me, struct vfs_s_super *super, const char 
 
         case COMPLETE:
             vfs_print_message ("%s", _ ("ftpfs: logged in"));
+            if (!anon && super->path_element->password != NULL)
+                ftpfs_password_remember (super->path_element, super->path_element->password);
             wipe_password (pass);
             g_free (name);
             return TRUE;
 
         default:
             ftp_super->failed_on_login = TRUE;
+            ftpfs_password_forget (super->path_element);
             wipe_password (super->path_element->password);
             super->path_element->password = NULL;
             goto login_fail;
@@ -2411,6 +2479,12 @@ ftpfs_done (struct vfs_class *me)
 
     g_free (ftpfs_anonymous_passwd);
     g_free (ftpfs_proxy_host);
+
+    if (ftpfs_passwords != NULL)
+    {
+        g_hash_table_destroy (ftpfs_passwords);
+        ftpfs_passwords = NULL;
+    }
 }
 
 /* --------------------------------------------------------------------------------------------- */
