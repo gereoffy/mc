@@ -251,6 +251,8 @@ sftpfs_op_init (sftpfs_super_t **super, const vfs_path_element_t **path_element,
 void
 sftpfs_attr_to_stat (const LIBSSH2_SFTP_ATTRIBUTES *attrs, struct stat *s)
 {
+    memset (s, 0, sizeof (struct stat));
+
     if ((attrs->flags & LIBSSH2_SFTP_ATTR_UIDGID) != 0)
     {
         s->st_uid = attrs->uid;
@@ -266,10 +268,9 @@ sftpfs_attr_to_stat (const LIBSSH2_SFTP_ATTRIBUTES *attrs, struct stat *s)
     }
 
     if ((attrs->flags & LIBSSH2_SFTP_ATTR_SIZE) != 0)
-    {
         s->st_size = attrs->filesize;
-        sftpfs_blksize (s);
-    }
+
+    sftpfs_blksize (s);
 
     if ((attrs->flags & LIBSSH2_SFTP_ATTR_PERMISSIONS) != 0)
         s->st_mode = attrs->permissions;
@@ -401,8 +402,8 @@ sftpfs_stat (const vfs_path_t *vpath, struct stat *buf, GError **mcerror)
     res = sftpfs_stat_init (&super, &path_element, vpath, mcerror, LIBSSH2_SFTP_STAT, &attrs);
     if (res >= 0)
     {
-        buf->st_nlink = 1;
         sftpfs_attr_to_stat (&attrs, buf);
+        buf->st_nlink = 1;
         res = 0;
     }
 
