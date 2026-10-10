@@ -44,7 +44,6 @@ typedef struct
 {
     LIBSSH2_SFTP_HANDLE *handle;
     sftpfs_super_t *super;
-    char *path;  // directory path as sent to the server
 } sftpfs_dir_data_t;
 
 /*** file scope variables ************************************************************************/
@@ -75,8 +74,6 @@ sftpfs_opendir (const vfs_path_t *vpath, GError **mcerror)
     if (!sftpfs_op_init (&sftpfs_super, &path_element, vpath, mcerror))
         return NULL;
 
-    sftpfs_readdir_attrs_reset (sftpfs_super);
-
     fixfname = sftpfs_fix_filename (path_element->path);
 
     while (TRUE)
@@ -96,7 +93,6 @@ sftpfs_opendir (const vfs_path_t *vpath, GError **mcerror)
     sftpfs_dir = g_new0 (sftpfs_dir_data_t, 1);
     sftpfs_dir->handle = handle;
     sftpfs_dir->super = sftpfs_super;
-    sftpfs_dir->path = g_strdup (fixfname->str);
 
     return (void *) sftpfs_dir;
 }
@@ -131,12 +127,7 @@ sftpfs_readdir (void *data, GError **mcerror)
     }
     while (rc == LIBSSH2_ERROR_EAGAIN);
 
-    if (rc == 0)
-        return NULL;
-
-    sftpfs_readdir_attrs_add (sftpfs_dir->super, sftpfs_dir->path, mem, &attrs);
-
-    return vfs_dirent_init (NULL, mem, 0, DT_UNKNOWN);  // FIXME: inode
+    return (rc != 0 ? vfs_dirent_init (NULL, mem, 0, DT_UNKNOWN) : NULL);  // FIXME: inode
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -157,7 +148,6 @@ sftpfs_closedir (void *data, GError **mcerror)
     mc_return_val_if_error (mcerror, -1);
 
     rc = libssh2_sftp_closedir (sftpfs_dir->handle);
-    g_free (sftpfs_dir->path);
     g_free (sftpfs_dir);
     return rc;
 }
@@ -182,8 +172,6 @@ sftpfs_mkdir (const vfs_path_t *vpath, mode_t mode, GError **mcerror)
 
     if (!sftpfs_op_init (&sftpfs_super, &path_element, vpath, mcerror))
         return -1;
-
-    sftpfs_readdir_attrs_reset (sftpfs_super);
 
     fixfname = sftpfs_fix_filename (path_element->path);
 
@@ -221,8 +209,6 @@ sftpfs_rmdir (const vfs_path_t *vpath, GError **mcerror)
 
     if (!sftpfs_op_init (&sftpfs_super, &path_element, vpath, mcerror))
         return -1;
-
-    sftpfs_readdir_attrs_reset (sftpfs_super);
 
     fixfname = sftpfs_fix_filename (path_element->path);
 

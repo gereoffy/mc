@@ -53,11 +53,6 @@ typedef struct
     char *pubkey;
     char *privkey;
 
-    /* Attributes got with the last directory listing: "/dir/name" -> LIBSSH2_SFTP_ATTRIBUTES.
-     * Used to answer the lstat() calls right after readdir() without a round trip per file. */
-    GHashTable *readdir_attrs;
-    gint64 readdir_attrs_time;
-
     int socket_handle;
     const char *ip_address;
     vfs_path_element_t *original_connection_info;
@@ -84,9 +79,6 @@ gboolean sftpfs_op_init (sftpfs_super_t **super, const vfs_path_element_t **path
                          const vfs_path_t *vpath, GError **mcerror);
 
 void sftpfs_attr_to_stat (const LIBSSH2_SFTP_ATTRIBUTES *attrs, struct stat *s);
-void sftpfs_readdir_attrs_reset (sftpfs_super_t *super);
-void sftpfs_readdir_attrs_add (sftpfs_super_t *super, const char *dir, const char *name,
-                               const LIBSSH2_SFTP_ATTRIBUTES *attrs);
 int sftpfs_lstat (const vfs_path_t *vpath, struct stat *buf, GError **mcerror);
 int sftpfs_stat (const vfs_path_t *vpath, struct stat *buf, GError **mcerror);
 int sftpfs_readlink (const vfs_path_t *vpath, char *buf, size_t size, GError **mcerror);
