@@ -1651,39 +1651,22 @@ get_random_hint (gboolean force)
 
 /* --------------------------------------------------------------------------------------------- */
 /**
- * Load new hint and display it.
- * IF force is not 0, ignore the timeout.
+ * Update the hint bar.
+ *
+ * Random hints are not shown: the hint bar only displays status messages (e.g. VFS progress),
+ * so keep the current message instead of overwriting it with a hint.
  */
 
 void
 load_hint (gboolean force)
 {
-    char *hint;
+    (void) force;
 
     if (WIDGET (the_hint)->owner == NULL)
         return;
 
     if (!mc_global.message_visible)
-    {
         label_set_text (the_hint, NULL);
-        return;
-    }
-
-    hint = get_random_hint (force);
-
-    if (hint != NULL)
-    {
-        if (*hint != '\0')
-            set_hintbar (hint);
-        g_free (hint);
-    }
-    else
-    {
-        char text[BUF_SMALL];
-
-        g_snprintf (text, sizeof (text), "%s %s\n", PACKAGE_NAME, mc_global.mc_version);
-        set_hintbar (text);
-    }
 }
 
 /* --------------------------------------------------------------------------------------------- */
