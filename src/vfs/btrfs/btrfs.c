@@ -58,8 +58,8 @@
 
 /*** file scope macro definitions ****************************************************************/
 
-#define BTRFS_SUPER(super)  ((btrfs_super_t *) (super))
-#define BTRFS_DATA(ino)     ((btrfs_inode_data_t *) (ino)->user_data)
+#define BTRFS_SUPER(super) ((btrfs_super_t *) (super))
+#define BTRFS_DATA(ino)    ((btrfs_inode_data_t *) (ino)->user_data)
 
 /* Symlink nesting limit while resolving paths */
 #define BTRFS_MAX_SYMLINKS 32
@@ -70,9 +70,9 @@ typedef struct
 {
     struct vfs_s_super base;  // base class
 
-    int fd;              // archive file or device
-    gboolean local;      // fd is a real descriptor (pread), otherwise an mc one
-    struct stat st;      // stat of the archive, to detect changes
+    int fd;          // archive file or device
+    gboolean local;  // fd is a real descriptor (pread), otherwise an mc one
+    struct stat st;  // stat of the archive, to detect changes
     btrfsro_fs *fs;
 } btrfs_super_t;
 
@@ -110,6 +110,10 @@ btrfs_log (void *ctx, int level, const char *msg)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+
+/* Device read callback of libbtrfsro. The library may call it from several threads: pread() is
+ * fine for that, but mc_lseek() + mc_read() on an image inside another VFS are not thread safe.
+ * libbtrfsro doesn't start threads itself, so all calls come from mc's thread. */
 
 static int
 btrfs_io_read (void *ctx, void *buf, uint64_t offset, size_t len)
@@ -171,7 +175,7 @@ btrfs_new_inode (struct vfs_class *me, struct vfs_s_super *super, const struct b
     memset (&st, 0, sizeof (st));
     if (btrfsro_stat (arch->fs, bi, &bst) == 0)
     {
-        st.st_mode = bst.mode;
+        st.st_mode = (mode_t) bst.mode;
         st.st_uid = bst.uid;
         st.st_gid = bst.gid;
         st.st_size = (off_t) bst.size;
@@ -292,8 +296,8 @@ btrfs_load_dir (struct vfs_class *me, struct vfs_s_inode *dir)
  */
 
 static struct vfs_s_entry *
-btrfs_walk (struct vfs_class *me, struct vfs_s_inode *dir, const char *path, int follow,
-            int flags, int depth)
+btrfs_walk (struct vfs_class *me, struct vfs_s_inode *dir, const char *path, int follow, int flags,
+            int depth)
 {
     struct vfs_s_inode *root = dir->super->root;
     struct vfs_s_entry *ent = NULL;
@@ -356,8 +360,8 @@ btrfs_walk (struct vfs_class *me, struct vfs_s_inode *dir, const char *path, int
         {
             const char *target = ent->ino->linkname;
 
-            ent = btrfs_walk (me, IS_PATH_SEP (*target) ? root : dir, target, LINK_FOLLOW,
-                              FL_NONE, depth + 1);
+            ent = btrfs_walk (me, IS_PATH_SEP (*target) ? root : dir, target, LINK_FOLLOW, FL_NONE,
+                              depth + 1);
             if (ent == NULL)
                 return NULL;
         }
@@ -543,8 +547,7 @@ btrfs_super_same (const vfs_path_element_t *vpath_element, struct vfs_s_super *p
         return 0;
 
     // Has the image been changed on the disk?
-    if (S_ISREG (archive_stat->st_mode)
-        && BTRFS_SUPER (parc)->st.st_mtime < archive_stat->st_mtime)
+    if (S_ISREG (archive_stat->st_mode) && BTRFS_SUPER (parc)->st.st_mtime < archive_stat->st_mtime)
     {
         vfs_btrfs_ops->free ((vfsid) parc);
         vfs_rmstamp (vfs_btrfs_ops, (vfsid) parc);
@@ -565,8 +568,7 @@ btrfs_read (void *fh, char *buffer, size_t count)
     btrfs_inode_data_t *data = BTRFS_DATA (file->ino);
     ssize_t res;
 
-    res = btrfsro_read (BTRFS_SUPER (super)->fs, &data->inode, (uint64_t) file->pos, buffer,
-                        count);
+    res = btrfsro_read (BTRFS_SUPER (super)->fs, &data->inode, (uint64_t) file->pos, buffer, count);
     if (res < 0)
     {
         super->me->verrno = (int) -res;
