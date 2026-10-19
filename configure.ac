@@ -620,6 +620,7 @@ src/filemanager/Makefile
 
 src/vfs/Makefile
 
+src/vfs/btrfs/Makefile
 src/vfs/cpio/Makefile
 
 src/vfs/extfs/Makefile

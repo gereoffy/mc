@@ -6,6 +6,11 @@ libmc_vfs_la_SOURCES = plugins_init.c plugins_init.h
 SUBDIRS = local
 libmc_vfs_la_LIBADD = local/libvfs-local.la
 
+if ENABLE_VFS_BTRFS
+SUBDIRS += btrfs
+libmc_vfs_la_LIBADD += btrfs/libvfs-btrfs.la
+endif
+
 if ENABLE_VFS_CPIO
 SUBDIRS += cpio
 libmc_vfs_la_LIBADD += cpio/libvfs-cpio.la
