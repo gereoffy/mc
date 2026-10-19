@@ -38,6 +38,10 @@
 
 #include "local/local.h"
 
+#ifdef ENABLE_VFS_BTRFS
+#include "btrfs/btrfs.h"
+#endif
+
 #ifdef ENABLE_VFS_CPIO
 #include "cpio/cpio.h"
 #endif
@@ -89,6 +93,9 @@ vfs_plugins_init (void)
     // localfs needs to be the first one
     vfs_init_localfs ();
 
+#ifdef ENABLE_VFS_BTRFS
+    vfs_init_btrfs ();
+#endif
 #ifdef ENABLE_VFS_CPIO
     vfs_init_cpiofs ();
 #endif

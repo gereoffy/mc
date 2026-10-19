@@ -964,6 +964,10 @@ Shell=.ipk
 Type=\\(gzip compressed
 Include=tar.gz
 
+[btrfs]
+Type=^BTRFS Filesystem
+Open=%cd %p/ubtrfs://
+
 [squashfs]
 Type=^Squashfs filesystem
 Open=%cd %p/usqfs://
