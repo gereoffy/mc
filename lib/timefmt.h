@@ -46,13 +46,16 @@
 
 /*** global variables defined in .c file *********************************************************/
 
-extern char *user_recent_timeformat;  // time format string for recent dates
-extern char *user_old_timeformat;     // time format string for older dates
+extern char *user_recent_timeformat;      // time format string for recent dates
+extern char *user_old_timeformat;         // time format string for older dates
+extern char *user_ministatus_timeformat;  // time format string for the mini status, may be NULL
 
 /*** declarations of public functions ************************************************************/
 
 size_t i18n_checktimelength (void);
 const char *file_date (time_t when);
+const char *file_date_ministatus (time_t when);
+int ministatus_timelength (void);
 
 /*** inline functions ****************************************************************************/
 

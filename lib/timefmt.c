@@ -46,8 +46,9 @@
 
 /*** global variables ****************************************************************************/
 
-char *user_recent_timeformat = NULL;  // time format string for recent dates
-char *user_old_timeformat = NULL;     // time format string for older dates
+char *user_recent_timeformat = NULL;      // time format string for recent dates
+char *user_old_timeformat = NULL;         // time format string for older dates
+char *user_ministatus_timeformat = NULL;  // time format string for the mini status, may be NULL
 
 /*** file scope macro definitions ****************************************************************/
 
@@ -151,6 +152,39 @@ file_date (time_t when)
     FMT_LOCALTIME (timebuf, sizeof (timebuf), fmt, when);
 
     return timebuf;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Format a time for the mini status: with the timeformat_ministatus format if it is set,
+ * otherwise like in the panel.
+ */
+
+const char *
+file_date_ministatus (time_t when)
+{
+    static char timebuf[MB_LEN_MAX * MAX_I18NTIMELENGTH + 1];
+
+    if (user_ministatus_timeformat == NULL || *user_ministatus_timeformat == '\0')
+        return file_date (when);
+
+    FMT_LOCALTIME (timebuf, sizeof (timebuf), user_ministatus_timeformat, when);
+
+    return timebuf;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Width of a time formatted with the timeformat_ministatus format, 0 if it isn't set.
+ */
+
+int
+ministatus_timelength (void)
+{
+    if (user_ministatus_timeformat == NULL || *user_ministatus_timeformat == '\0')
+        return 0;
+
+    return str_term_width1 (file_date_ministatus (time (NULL)));
 }
 
 /* --------------------------------------------------------------------------------------------- */

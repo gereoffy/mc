@@ -162,6 +162,9 @@ static const char *string_dot (const file_entry_t *fe, int len);
 
 /*** file scope variables ************************************************************************/
 
+// the mini status is being formatted: the time fields use timeformat_ministatus
+static gboolean formatting_status = FALSE;
+
 static panel_field_t panel_fields[] = {
     { "unsorted", 12, TRUE, J_LEFT_FIT,
       // TRANSLATORS: one single character to represent 'unsorted' sort mode
@@ -481,7 +484,7 @@ string_file_mtime (const file_entry_t *fe, int len)
 {
     (void) len;
 
-    return file_date (fe->st.st_mtime);
+    return formatting_status ? file_date_ministatus (fe->st.st_mtime) : file_date (fe->st.st_mtime);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -492,7 +495,7 @@ string_file_atime (const file_entry_t *fe, int len)
 {
     (void) len;
 
-    return file_date (fe->st.st_atime);
+    return formatting_status ? file_date_ministatus (fe->st.st_atime) : file_date (fe->st.st_atime);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -503,7 +506,7 @@ string_file_ctime (const file_entry_t *fe, int len)
 {
     (void) len;
 
-    return file_date (fe->st.st_ctime);
+    return formatting_status ? file_date_ministatus (fe->st.st_ctime) : file_date (fe->st.st_ctime);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -698,6 +701,8 @@ format_file (WPanel *panel, int file_index, int width, file_attr_t attr, gboolea
         color = file_compute_color (attr, fe);
     }
 
+    formatting_status = isstatus;
+
     home = isstatus ? panel->status_format : panel->format;
 
     for (format = home; format != NULL && length != width; format = g_slist_next (format))
@@ -782,6 +787,8 @@ format_file (WPanel *panel, int file_index, int width, file_attr_t attr, gboolea
         tty_getyx (&y, &x);
         tty_draw_hline (y, x, ' ', width - length);
     }
+
+    formatting_status = FALSE;
 
     return res;
 }
@@ -1723,6 +1730,10 @@ parse_display_format (WPanel *panel, const char *format, char **error, gboolean 
             format += klen;
 
             darr->requested_field_len = panel_fields[i].min_size;
+            // the time fields of the mini status may have their own format
+            if (isstatus && strcmp ("time", panel_fields[i].id + 1) == 0
+                && ministatus_timelength () > 0)
+                darr->requested_field_len = ministatus_timelength ();
             darr->string_fn = panel_fields[i].string_fn;
             darr->title = g_strdup (panel_get_title_without_hotkey (panel_fields[i].title_hotkey));
             darr->id = panel_fields[i].id;

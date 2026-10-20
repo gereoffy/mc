@@ -907,6 +907,8 @@ load_setup (void)
                                                    "timeformat_recent", FMTTIME);
     user_old_timeformat = mc_config_get_string (mc_global.main_config, CONFIG_MISC_SECTION,
                                                 "timeformat_old", FMTYEAR);
+    user_ministatus_timeformat = mc_config_get_string (mc_global.main_config, CONFIG_MISC_SECTION,
+                                                       "timeformat_ministatus", NULL);
 
 #ifdef ENABLE_VFS_FTP
     ftpfs_proxy_host =
@@ -1058,6 +1060,7 @@ done_setup (void)
 
     g_free (user_recent_timeformat);
     g_free (user_old_timeformat);
+    g_free (user_ministatus_timeformat);
 
     for (i = 0; str_options[i].opt_name != NULL; i++)
         g_free (*str_options[i].opt_addr);
