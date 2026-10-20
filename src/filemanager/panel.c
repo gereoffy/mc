@@ -1046,9 +1046,29 @@ mini_info_separator (const WPanel *panel)
         y = panel_lines (panel) + 2;
 
         tty_setcolor (CORE_NORMAL_COLOR);
-        /* Status displays total marked size.
-         * Centered in panel, full format. */
-        display_total_marked_size (panel, y, -1, FALSE);
+
+        if (panel->marked > 0)
+            /* Status displays total marked size.
+             * Centered in panel, full format. */
+            display_total_marked_size (panel, y, -1, FALSE);
+        else
+        {
+            const file_entry_t *fe;
+
+            fe = panel_current_entry (panel);
+
+            // Without marked files, show the exact size of the current file
+            if (fe != NULL && S_ISREG (fe->st.st_mode))
+            {
+                const Widget *w = CONST_WIDGET (panel);
+                const char *buf;
+
+                buf = str_trunc (size_trunc_sep (fe->st.st_size, panels_options.kilobyte_si),
+                                 w->rect.cols - 6);
+                widget_gotoyx (w, y, (w->rect.cols - str_term_width1 (buf)) / 2 - 1);
+                tty_printf (" %s ", buf);
+            }
+        }
     }
 }
 
