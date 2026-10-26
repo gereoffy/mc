@@ -40,6 +40,7 @@
 
 #include "lib/global.h"
 #include "lib/strutil.h"
+#include "lib/util.h"      // size_trunc_len()
 #include "lib/charsets.h"  // cp_source
 #include "lib/widget.h"
 
@@ -68,6 +69,7 @@ typedef struct
     gboolean first;
     WView *view;
     off_t offset;
+    gint64 label_time;  // when the searched amount was shown last
 } mcview_search_status_msg_t;
 
 /*** forward declarations (file scope functions) *************************************************/
@@ -98,6 +100,20 @@ mcview_search_status_update_cb (status_msg_t *sm)
     if (percent >= 0)
         label_set_textv (ssm->label, _ ("Searching %s: %3d%%"), vsm->view->last_search_string,
                          percent);
+    else if (verbose)
+    {
+        /* The size is unknown (data from a pipe): show how much has been searched, at most five
+         * times a second, as this is called for every few tens of kilobytes. */
+        if (vsm->first || g_get_monotonic_time () - vsm->label_time >= G_USEC_PER_SEC / 5)
+        {
+            char buffer[BUF_TINY];
+
+            size_trunc_len (buffer, 5, vsm->offset, 0, panels_options.kilobyte_si);
+            label_set_textv (ssm->label, _ ("Searching %s: %s"), vsm->view->last_search_string,
+                             buffer);
+            vsm->label_time = g_get_monotonic_time ();
+        }
+    }
     else
         label_set_textv (ssm->label, _ ("Searching %s"), vsm->view->last_search_string);
 
@@ -507,6 +523,7 @@ mcview_do_search (WView *view, off_t want_search_start)
     view->update_activate = search_start;
 
     vsm.first = TRUE;
+    vsm.label_time = 0;
     vsm.view = view;
     vsm.offset = search_start;
 
@@ -567,6 +584,7 @@ mcview_do_search (WView *view, off_t want_search_start)
             view->update_activate = 0;
 
             vsm.first = TRUE;
+            vsm.label_time = 0;
             vsm.view = view;
             vsm.offset = 0;
 
