@@ -275,6 +275,7 @@ off_t mcview_growbuf_filesize (WView *view);
 void mcview_growbuf_read_until (WView *view, off_t ofs);
 gboolean mcview_get_byte_growing_buffer (WView *view, off_t byte_index, int *retval);
 char *mcview_get_ptr_growing_buffer (WView *view, off_t byte_index);
+size_t mcview_growbuf_copy (WView *view, off_t ofs, char *buf, size_t len);
 
 /* hex.c: */
 void mcview_display_hex (WView *view);
