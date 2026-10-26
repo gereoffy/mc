@@ -69,7 +69,8 @@ typedef struct
     gboolean first;
     WView *view;
     off_t offset;
-    gint64 label_time;  // when the searched amount was shown last
+    gint64 label_time;   // when the searched amount was shown last
+    off_t searched_end;  // end of the area searched by the last forward mcview_find()
 } mcview_search_status_msg_t;
 
 /*** forward declarations (file scope functions) *************************************************/
@@ -174,7 +175,8 @@ mcview_search_update_steps (WView *view)
 /* --------------------------------------------------------------------------------------------- */
 /**
  * Prepare the fast path of mcview_find() if it can be used for this search. It handles the most
- * common cases only: a forward search in a file, without whole words, all charsets or nroff mode,
+ * common cases only: a forward search in a file or in the data read from a pipe, without whole
+ * words, all charsets or nroff mode,
  * either
  *  - normal (not regex/wildcard) search for a case sensitive string or a plain ASCII one: the
  *    search string is already in the charset of the file (see mcview_dialog_search()), so a case
@@ -197,9 +199,9 @@ mcview_fast_search_prepare (const WView *view, gboolean *caseless)
     GString *needle;
     gsize i;
 
-    if (view->datasource != DS_FILE || view->mode_flags.nroff || mcview_search_options.backwards
-        || view->search_line_type != 0 || search->is_all_charsets || search->whole_words
-        || str == NULL || str->len == 0)
+    if ((view->datasource != DS_FILE && !view->growbuf_in_use) || view->mode_flags.nroff
+        || mcview_search_options.backwards || view->search_line_type != 0 || search->is_all_charsets
+        || search->whole_words || str == NULL || str->len == 0)
         return NULL;
 
     if (search->search_type == MC_SEARCH_T_NORMAL)
@@ -321,9 +323,9 @@ mcview_fast_search_find (const char *hay, gsize hay_len, const char *needle, gsi
 
 /* --------------------------------------------------------------------------------------------- */
 /**
- * Fast path of mcview_find(): read the file in big chunks and search the bytes directly. Case
- * insensitive search matches ASCII letters only, which is enough for an ASCII search string
- * (see mcview_fast_search_prepare()).
+ * Fast path of mcview_find(): read the file (or the growing buffer of a pipe) in big chunks and
+ * search the bytes directly. Case insensitive search matches ASCII letters only, which is enough
+ * for an ASCII search string (see mcview_fast_search_prepare()).
  * Sets the same result fields (normal_offset, error) as mc_search_run().
  */
 
@@ -350,18 +352,23 @@ mcview_fast_search (mcview_search_status_msg_t *ssm, off_t search_start, off_t s
         const char *hit;
         gsize total;
 
-        if (mc_lseek (view->ds_file_fd, pos, SEEK_SET) != pos)
+        if (view->growbuf_in_use)
+            got = mcview_growbuf_copy (view, pos, buf + keep, want);
+        else
         {
-            error = MC_SEARCH_E_INPUT;
-            break;
-        }
-        while (got < want)
-        {
-            const ssize_t n = mc_read (view->ds_file_fd, buf + keep + got, want - got);
-
-            if (n <= 0)
+            if (mc_lseek (view->ds_file_fd, pos, SEEK_SET) != pos)
+            {
+                error = MC_SEARCH_E_INPUT;
                 break;
-            got += (size_t) n;
+            }
+            while (got < want)
+            {
+                const ssize_t n = mc_read (view->ds_file_fd, buf + keep + got, want - got);
+
+                if (n <= 0)
+                    break;
+                got += (size_t) n;
+            }
         }
         if (got == 0)
             break;
@@ -390,6 +397,8 @@ mcview_fast_search (mcview_search_status_msg_t *ssm, off_t search_start, off_t s
 
     g_free (buf);
 
+    ssm->searched_end = pos;
+
     if (found)
         mc_search_set_error (search, MC_SEARCH_E_OK, NULL);
     else if (error == MC_SEARCH_E_NOTFOUND)
@@ -411,6 +420,7 @@ mcview_find (mcview_search_status_msg_t *ssm, off_t search_start, off_t search_e
 
     view->search_numNeedSkipChar = 0;
     search_cb_char_curr_index = -1;
+    ssm->searched_end = search_end;
 
     if (mcview_search_options.backwards)
     {
@@ -464,6 +474,11 @@ mcview_find (mcview_search_status_msg_t *ssm, off_t search_start, off_t search_e
         if (needle != NULL)
         {
             gboolean found;
+
+            /* Data from a pipe: search up to the end of the data, not only the part already read,
+             * to read and search it in big chunks. */
+            if (view->growbuf_in_use && search_end >= mcview_growbuf_filesize (view))
+                search_end = OFFSETTYPE_MAX;
 
             found = mcview_fast_search (ssm, search_start, search_end, len, needle, caseless);
             g_string_free (needle, TRUE);
@@ -562,13 +577,6 @@ mcview_do_search (WView *view, off_t want_search_start)
 
     do
     {
-        off_t growbufsize;
-
-        if (view->growbuf_in_use)
-            growbufsize = mcview_growbuf_filesize (view);
-        else
-            growbufsize = view->search->original.str->len;
-
         if (mcview_find (&vsm, search_start, mcview_get_filesize (view), &match_len))
         {
             mcview_search_show_result (view, match_len);
@@ -583,7 +591,7 @@ mcview_do_search (WView *view, off_t want_search_start)
         if (view->search->error != MC_SEARCH_E_NOTFOUND)
             break;
 
-        search_start = growbufsize - view->search->original.str->len;
+        search_start = vsm.searched_end - (off_t) view->search->original.str->len;
     }
     while (search_start > 0 && mcview_may_still_grow (view));
 

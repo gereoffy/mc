@@ -291,3 +291,39 @@ mcview_get_ptr_growing_buffer (WView *view, off_t byte_index)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/** Copies at most @len bytes from offset @ofs of the growing buffer to @buf, reading more data
+ * from the pipe if needed. Returns the number of bytes copied, less than @len at the end of data.
+ */
+
+size_t
+mcview_growbuf_copy (WView *view, off_t ofs, char *buf, size_t len)
+{
+    off_t filesize;
+    size_t copied = 0;
+
+    g_assert (view->growbuf_in_use);
+
+    if (ofs < 0)
+        return 0;
+
+    mcview_growbuf_read_until (view, ofs + (off_t) len);
+    filesize = mcview_growbuf_filesize (view);
+
+    while (copied < len && ofs < filesize)
+    {
+        const off_t pageno = ofs / VIEW_PAGE_SIZE;
+        const size_t pageindex = (size_t) (ofs % VIEW_PAGE_SIZE);
+        size_t n;
+
+        n = MIN (len - copied, VIEW_PAGE_SIZE - pageindex);
+        n = (size_t) MIN ((off_t) n, filesize - ofs);
+        memcpy (buf + copied,
+                (char *) g_ptr_array_index (view->growbuf_blockptr, pageno) + pageindex, n);
+        copied += n;
+        ofs += (off_t) n;
+    }
+
+    return copied;
+}
+
+/* --------------------------------------------------------------------------------------------- */
