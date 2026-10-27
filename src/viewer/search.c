@@ -37,7 +37,7 @@
 
 #include "lib/global.h"
 #include "lib/strutil.h"
-#include "lib/util.h"      // size_trunc_len()
+#include "lib/util.h"      // size_trunc_len(), mc_time_elapsed()
 #include "lib/charsets.h"  // cp_source
 #include "lib/widget.h"
 
@@ -66,7 +66,7 @@ typedef struct
     gboolean first;
     WView *view;
     off_t offset;
-    gint64 next_label_redraw;  // when the searched amount may be shown next
+    gint64 label_timestamp;  // when the searched amount was shown last
 } mcview_search_status_msg_t;
 
 /*** forward declarations (file scope functions) *************************************************/
@@ -98,16 +98,13 @@ mcview_search_status_update_cb (status_msg_t *sm)
     {
         /* The size is unknown (data from a pipe): show how much has been searched, at most five
          * times a second, as this is called every few tens of kilobytes. */
-        const gint64 now = g_get_monotonic_time ();
-
-        if (vsm->first || now >= vsm->next_label_redraw)
+        if (mc_time_elapsed (&vsm->label_timestamp, G_USEC_PER_SEC / 5))
         {
             char buffer[BUF_TINY];
 
             size_trunc_len (buffer, 5, vsm->offset, 0, panels_options.kilobyte_si);
             label_set_textv (ssm->label, _ ("Searching %s: %s"), vsm->view->last_search_string,
                              buffer);
-            vsm->next_label_redraw = now + G_USEC_PER_SEC / 5;
         }
     }
     else
@@ -303,7 +300,7 @@ mcview_do_search (WView *view, off_t want_search_start)
     view->update_activate = search_start;
 
     vsm.first = TRUE;
-    vsm.next_label_redraw = 0;
+    vsm.label_timestamp = 0;
     vsm.view = view;
     vsm.offset = search_start;
 
@@ -364,7 +361,7 @@ mcview_do_search (WView *view, off_t want_search_start)
             view->update_activate = 0;
 
             vsm.first = TRUE;
-            vsm.next_label_redraw = 0;
+            vsm.label_timestamp = 0;
             vsm.view = view;
             vsm.offset = 0;
 
