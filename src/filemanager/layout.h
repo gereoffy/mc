@@ -43,7 +43,6 @@ typedef struct
 extern int output_lines;
 extern int output_start_y;
 extern gboolean xterm_title;
-extern gboolean terminal_progress;
 extern gboolean free_space;
 extern gboolean nice_rotating_dash;
 

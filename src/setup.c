@@ -272,7 +272,6 @@ static const struct
     { "message_visible", &mc_global.hint_visible },
     { "keybar_visible", &mc_global.keybar_visible },
     { "xterm_title", &xterm_title },
-    { "terminal_progress", &terminal_progress },
     { "command_prompt", &mc_global.cmdline_visible },
     { "menubar_visible", &mc_global.menubar_visible },
     { "free_space", &free_space },

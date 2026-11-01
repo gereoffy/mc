@@ -160,7 +160,8 @@ gauge_callback (Widget *w, Widget *sender, widget_msg_t msg, int parm, void *dat
 /* --------------------------------------------------------------------------------------------- */
 
 WGauge *
-gauge_new (int y, int x, int cols, gboolean shown, int max, int current)
+gauge_new (int y, int x, int cols, gboolean shown, int max, int current,
+           gboolean from_left_to_right, gboolean terminal_progress)
 {
     WRect r = { y, x, 1, cols };
     WGauge *g;
@@ -175,8 +176,8 @@ gauge_new (int y, int x, int cols, gboolean shown, int max, int current)
         max = 1;  // I do not like division by zero :)
     g->max = max;
     g->current = current;
-    g->from_left_to_right = TRUE;
-    g->terminal_progress = FALSE;
+    g->from_left_to_right = from_left_to_right;
+    g->terminal_progress = terminal_progress;
     g->terminal_percentage = -1;
 
     return g;
