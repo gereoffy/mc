@@ -1846,20 +1846,20 @@ nodelay_try_again:
         // No match found. Is it one of our ESC <key> specials?
         if ((parent != NULL) && (parent->action == MCKEY_ESCAPE))
         {
-            /* ESC + Shift + digit on a US keyboard, except ESC ! and ESC *, which are used as
-             * Alt-! and Alt-* */
-            static const char shifted_digits[] = "!@#$%^&*()";
+            /* ESC + Shift + 3..6 on a US keyboard: the useful Shift + F-keys in mc
+             * (view raw, new file, copy and move/rename single file) */
+            static const char shifted_digits[] = "#$%^";
             const char *shifted = NULL;
 
-            if (c > 0 && c < 128 && c != '!' && c != '*')
+            if (c > 0 && c < 128)
                 shifted = strchr (shifted_digits, c);
 
             // Convert escape-digits to F-keys
             if (g_ascii_isdigit (c))
                 c = KEY_F (c - '0');
-            // and escape-shift-digits to F11..F20
+            // and ESC # .. ESC ^ to F13..F16
             else if (shifted != NULL)
-                c = KEY_F (11 + (int) (shifted - shifted_digits));
+                c = KEY_F (13 + (int) (shifted - shifted_digits));
             else if (c == ' ')
                 c = ESC_CHAR;
             else
