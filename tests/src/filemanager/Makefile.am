@@ -13,6 +13,7 @@ LDADD = \
 	@CHECK_LIBS@
 
 TESTS = \
+	cd_expand_wildcards \
 	cd_to \
 	copy_file_file \
 	examine_cd \
@@ -23,6 +24,9 @@ TESTS = \
 	has_unquoted_metacharacters
 
 check_PROGRAMS = $(TESTS)
+
+cd_expand_wildcards_SOURCES = \
+	cd_expand_wildcards.c
 
 cd_to_SOURCES = \
 	cd_to.c
