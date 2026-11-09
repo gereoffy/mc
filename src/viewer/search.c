@@ -174,9 +174,8 @@ mcview_search_update_steps (WView *view)
 /* --------------------------------------------------------------------------------------------- */
 /**
  * Prepare the fast path of mcview_find() if it can be used for this search. It handles the most
- * common cases only: a forward search in a file or in the data read from a pipe, without whole
- * words, all charsets or nroff mode,
- * either
+ * common cases only (the caller checks for a forward search in a file or in the data read from a
+ * pipe, without whole words, all charsets or nroff mode), either
  *  - normal (not regex/wildcard) search for a case sensitive string or a plain ASCII one: the
  *    search string is already in the charset of the file (see mcview_dialog_search()), so a case
  *    sensitive match is a byte match, while a case insensitive one needs Unicode case folding
@@ -185,22 +184,19 @@ mcview_search_update_steps (WView *view)
  * Everything else goes through the generic mc_search_run(), which fetches the data byte by byte
  * through mcview_search_cmd_callback() and is much slower.
  *
- * @param view     viewer
+ * @param search   search
  * @param caseless set to TRUE if ASCII letters must be matched case insensitively
  * @return the bytes to search for, NULL if the fast path can't be used
  */
 
 static GString *
-mcview_fast_search_prepare (const WView *view, gboolean *caseless)
+mcview_fast_search_prepare (const mc_search_t *search, gboolean *caseless)
 {
-    const mc_search_t *search = view->search;
     const GString *str = search->original.str;
     GString *needle;
     gsize i;
 
-    if ((view->datasource != DS_FILE && !view->growbuf_in_use) || view->mode_flags.nroff
-        || mcview_search_options.backwards || view->search_line_type != 0 || search->is_all_charsets
-        || search->whole_words || str == NULL || str->len == 0)
+    if (str == NULL || str->len == 0)
         return NULL;
 
     if (search->search_type == MC_SEARCH_T_NORMAL)
@@ -304,9 +300,11 @@ mcview_fast_search_find (const char *hay, gsize hay_len, const char *needle, gsi
         {
             for (i = 1; i < needle_len; i++)
             {
-                const char c = p[i];
+                char c = p[i];
 
-                if (((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c) != needle[i])
+                if (c >= 'A' && c <= 'Z')
+                    c += 'a' - 'A';
+                if (c != needle[i])
                     break;
             }
             if (i == needle_len)
@@ -465,11 +463,15 @@ mcview_find (mcview_search_status_msg_t *ssm, off_t search_start, off_t search_e
     if ((view->search_line_type & MC_SEARCH_LINE_BEGIN) != 0 && search_start != 0)
         search_start = mcview_eol (view, search_start);
 
+    // a forward search in a file or a pipe, without whole words, all charsets or nroff mode
+    if ((view->datasource == DS_FILE || view->growbuf_in_use) && !view->mode_flags.nroff
+        && view->search_line_type == 0 && !view->search->is_all_charsets
+        && !view->search->whole_words)
     {
         gboolean caseless = FALSE;
         GString *needle;
 
-        needle = mcview_fast_search_prepare (view, &caseless);
+        needle = mcview_fast_search_prepare (view->search, &caseless);
         if (needle != NULL)
         {
             gboolean found;
