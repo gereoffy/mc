@@ -78,6 +78,12 @@ SHOR_MC_VERSION="${CURR_MC_VERSION}"
 new_version=`git --git-dir "${src_top_dir}/.git" describe --always 2>/dev/null`
 [ -z "${new_version}" ] && mc_print_version
 
+# replace the abbreviated hash of an untagged commit with its date, which is easier to remember:
+# 4.8.33-912-g805caa640 -> 4.8.33-912-20261110
+commit_date=`git --git-dir "${src_top_dir}/.git" log -1 --format=%cd --date=format:%Y%m%d 2>/dev/null`
+[ -n "${commit_date}" ] && \
+    new_version=`echo "${new_version}" | ${SED-sed} "s/-g[0-9a-f]*\$/-${commit_date}/"`
+
 # store pretty tagged version
 CURR_MC_VERSION="${new_version}"
 SHOR_MC_VERSION="${CURR_MC_VERSION}"
