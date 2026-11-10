@@ -56,6 +56,7 @@ mcview_search_options_t mcview_search_options = {
     .backwards = FALSE,
     .whole_words = FALSE,
     .all_codepages = FALSE,
+    .ignore_accents = FALSE,
 };
 
 /*** file scope macro definitions ****************************************************************/
@@ -175,7 +176,7 @@ mcview_search_update_steps (WView *view)
 /**
  * Prepare the fast path of mcview_find() if it can be used for this search. It handles the most
  * common cases only (the caller checks for a search in a file or in the data read from a pipe,
- * without whole words, all charsets or nroff mode), either
+ * without whole words, all charsets, ignoring accents or nroff mode), either
  *  - normal (not regex/wildcard) search for a case sensitive string or a plain ASCII one: the
  *    search string is already in the charset of the file (see mcview_dialog_search()), so a case
  *    sensitive match is a byte match, while a case insensitive one needs Unicode case folding
@@ -569,10 +570,11 @@ mcview_find (mcview_search_status_msg_t *ssm, off_t search_start, off_t search_e
     search_cb_char_curr_index = -1;
     ssm->searched_end = search_end;
 
-    // a search in a file or a pipe, without whole words, all charsets or nroff mode
+    // a search in a file or a pipe, without whole words, all charsets, ignoring accents or
+    // nroff mode
     if ((view->datasource == DS_FILE || view->growbuf_in_use) && !view->mode_flags.nroff
         && view->search_line_type == 0 && !view->search->is_all_charsets
-        && !view->search->whole_words)
+        && !view->search->whole_words && !view->search->ignore_accents)
     {
         gboolean caseless = FALSE;
         GString *needle;
@@ -834,6 +836,7 @@ mcview_search_init (WView *view)
     view->search->is_all_charsets = mcview_search_options.all_codepages;
     view->search->is_case_sensitive = mcview_search_options.case_sens;
     view->search->whole_words = mcview_search_options.whole_words;
+    view->search->ignore_accents = mcview_search_options.ignore_accents;
     view->search->search_fn = mcview_search_cmd_callback;
     view->search->update_fn = mcview_search_update_cmd_callback;
 
