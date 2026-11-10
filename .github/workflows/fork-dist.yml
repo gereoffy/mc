@@ -1,0 +1,62 @@
+name: fork-dist
+
+# Build a distribution archive (with the generated configure script, so it
+# needs no autotools) for every push to master, and publish it as a release.
+# The latest one is always at:
+# https://github.com/gereoffy/mc/releases/latest/download/mc-latest.tar.gz
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: fork-dist
+  cancel-in-progress: false
+
+jobs:
+  dist:
+    if: github.repository == 'gereoffy/mc'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # version.sh uses "git describe", which needs the release tags of upstream
+      - name: Fetch upstream tags
+        run: git fetch --no-tags https://github.com/MidnightCommander/mc.git '+refs/tags/*:refs/tags/*'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf autopoint gettext libtool pkg-config
+          sudo apt-get install -y libglib2.0-dev libslang2-dev
+
+      - name: Build distribution archive
+        run: |
+          ./autogen.sh
+          ./configure
+          make dist-gzip
+          version=$(sed -n 's/^#define MC_CURRENT_VERSION "\(.*\)"$/\1/p' mc-version.h)
+          test -f "mc-${version}.tar.gz"
+          cp "mc-${version}.tar.gz" mc-latest.tar.gz
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+
+      # "gh release create" makes a lightweight tag, which "git describe" ignores
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "dist-${VERSION}" \
+              --target "${GITHUB_SHA}" \
+              --title "mc ${VERSION}" \
+              --notes "Built from ${GITHUB_SHA}. Build with: ./configure && make" \
+              --latest \
+              "mc-${VERSION}.tar.gz" mc-latest.tar.gz
