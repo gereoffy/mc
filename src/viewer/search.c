@@ -748,7 +748,11 @@ mcview_do_search (WView *view, off_t want_search_start)
         if (view->search->error != MC_SEARCH_E_NOTFOUND)
             break;
 
-        search_start = vsm.searched_end - (off_t) view->search->original.str->len;
+        /* Continue with the data read in the meantime, overlapping the area searched so far for
+         * matches across its end, but not before the start: a match there has already been found
+         * (or skipped) and would be found again. */
+        search_start =
+            MAX (search_start, vsm.searched_end - (off_t) view->search->original.str->len);
     }
     // a backward search doesn't read more data from a pipe: search the data already read only
     while (!mcview_search_options.backwards && search_start > 0 && mcview_may_still_grow (view));
