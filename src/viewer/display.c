@@ -101,7 +101,7 @@ mcview_set_buttonbar (WView *view)
             b, 2, view->mode_flags.wrap ? Q_ ("ButtonBar|UnWrap") : Q_ ("ButtonBar|Wrap"), keymap,
             w);
         buttonbar_set_label (b, 4, Q_ ("ButtonBar|Hex"), keymap, w);
-        buttonbar_set_label (b, 6, "", keymap, WIDGET (view));
+        buttonbar_set_label (b, 6, Q_ ("ButtonBar|Filter"), keymap, w);
         buttonbar_set_label (b, 7, Q_ ("ButtonBar|Search"), keymap, w);
     }
 
@@ -122,11 +122,8 @@ mcview_set_buttonbar (WView *view)
 /* --------------------------------------------------------------------------------------------- */
 
 static void
-mcview_display_percent (WView *view, off_t p)
+mcview_display_percent (WView *view, int percent)
 {
-    int percent;
-
-    percent = mcview_calc_percent (view, p);
     if (percent >= 0)
     {
         int top = view->status_area.y;
@@ -146,6 +143,7 @@ static void
 mcview_display_status (WView *view)
 {
     const WRect *r = &view->status_area;
+    const gboolean filtered = mcview_filter_on (view);
     const char *file_label;
 
     if (r->lines < 1)
@@ -163,6 +161,13 @@ mcview_display_status (WView *view)
         widget_gotoyx (view, r->y, r->cols - 32);
         if (view->mode_flags.hex)
             tty_printf ("0x%08" PRIxMAX, (uintmax_t) view->hex_cursor);
+        else if (filtered)
+        {
+            char *position = mcview_filter_position (view);
+
+            tty_printf ("%-27s", position);
+            g_free (position);
+        }
         else
         {
             char buffer[BUF_TRUNC_LEN + 1];
@@ -176,12 +181,32 @@ mcview_display_status (WView *view)
         }
     }
     widget_gotoyx (view, r->y, r->x);
-    if (r->cols > 40)
-        tty_print_string (str_fit_to_term (file_label, r->cols - 34, J_LEFT_FIT));
-    else
-        tty_print_string (str_fit_to_term (file_label, r->cols - 5, J_LEFT_FIT));
+    {
+        const int width = r->cols > 40 ? r->cols - 34 : r->cols - 5;
+
+        if (!filtered)
+            tty_print_string (str_fit_to_term (file_label, width, J_LEFT_FIT));
+        else
+        {
+            // the file name, shortened if needed, then the filter
+            char *filter_label;
+            int filter_width;
+
+            filter_label = g_strdup_printf (view->filter_invert ? _ (" | Filter: not %s")
+                                                                : _ (" | Filter: %s"),
+                                            view->filter_text);
+            filter_width = MIN (str_term_width1 (filter_label), width);
+            tty_print_string (str_fit_to_term (file_label, width - filter_width, J_LEFT_FIT));
+            tty_print_string (str_fit_to_term (filter_label, filter_width, J_LEFT_FIT));
+            g_free (filter_label);
+        }
+    }
     if (r->cols > 26)
-        mcview_display_percent (view, view->mode_flags.hex ? view->hex_cursor : view->dpy_end);
+        mcview_display_percent (
+            view,
+            filtered ? mcview_filter_percent (view)
+                     : mcview_calc_percent (
+                           view, view->mode_flags.hex ? view->hex_cursor : view->dpy_end));
 }
 
 /* --------------------------------------------------------------------------------------------- */

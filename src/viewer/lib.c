@@ -99,6 +99,10 @@ mcview_toggle_magic_mode (WView *view)
 void
 mcview_toggle_wrap_mode (WView *view)
 {
+    // the filtered lines are shown unwrapped
+    if (view->filter != NULL)
+        return;
+
     view->mode_flags.wrap = !view->mode_flags.wrap;
     view->dpy_wrap_dirty = TRUE;
     view->dpy_bbar_dirty = TRUE;
@@ -208,6 +212,9 @@ mcview_done (WView *view)
                             view->saved_bookmarks);
         view->saved_bookmarks = NULL;
     }
+
+    // with its wrap mode
+    mcview_filter_clear (view);
 
     // Write back the global viewer mode
     mcview_global_flags = view->mode_flags;

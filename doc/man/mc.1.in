@@ -2975,6 +2975,19 @@ Toggle the hex mode.
 Goto. You can specify a line number, offset or percentage of file size
 of position that you want to view.
 .TP
+.B F6
+Filter: show only the lines containing a string, like grep. The last
+search string is offered, so the lines of the matches of a search can be
+shown with F6 and Enter. The string is matched as it is, case
+insensitively for ASCII letters unless "Case sensitive" is checked (the
+same option as in the search). With "Show the lines without it" checked,
+the lines not containing the string are shown, like grep \-v. The lines are looked for as far as they
+are shown, so the first ones are shown at once even in a big file. The
+status line shows the filter and the number of the lines found ("+" if
+the end of the file has not been reached yet). The search finds the
+matches in these lines only, and the wrap mode is off. An empty string
+shows all lines again.
+.TP
 .B F7, /, ?
 Start search. These keys call the dialog window that allows you to set up
 the search options. If key is ? the "Backwards" option is on.

@@ -307,7 +307,7 @@ mcview_fast_search_match (const char *p, const char *needle, gsize needle_len, g
  * first byte are looked for with memchr(), which is much faster than folding the whole @hay.
  */
 
-static const char *
+const char *
 mcview_fast_search_find (const char *hay, gsize hay_len, const char *needle, gsize needle_len,
                          gboolean caseless)
 {
@@ -381,7 +381,7 @@ mcview_fast_search_find_last (const char *hay, gsize hay_len, const char *needle
  * @return the number of bytes read (less than @len at the end of the file), -1 on error
  */
 
-static gssize
+gssize
 mcview_fast_search_read (WView *view, off_t pos, char *buf, size_t len)
 {
     size_t got = 0;
@@ -652,6 +652,45 @@ mcview_find (mcview_search_status_msg_t *ssm, off_t search_start, off_t search_e
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/** mcview_find(), but skip the matches in the lines hidden by the filter. */
+
+static gboolean
+mcview_find_shown (mcview_search_status_msg_t *ssm, off_t search_start, off_t search_end,
+                   gsize *len)
+{
+    WView *view = ssm->view;
+
+    while (mcview_find (ssm, search_start, search_end, len))
+    {
+        const off_t found = view->search->normal_offset;
+
+        if (!mcview_filter_hides (view, found))
+            return TRUE;
+
+        // go on in the next (or previous) line
+        if (mcview_search_options.backwards)
+        {
+            const off_t bol = mcview_bol (view, found, 0);
+
+            if (bol == 0)
+                break;
+            search_start = bol - 1;
+        }
+        else
+        {
+            search_start = mcview_eol (view, found);
+            if (search_start >= search_end)
+                break;
+        }
+    }
+
+    if (view->search->error == MC_SEARCH_E_OK)
+        mc_search_set_error (view->search, MC_SEARCH_E_NOTFOUND, "%s", _ (STR_E_NOTFOUND));
+
+    return FALSE;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 static void
 mcview_search_show_result (WView *view, size_t match_len)
@@ -736,7 +775,7 @@ mcview_do_search (WView *view, off_t want_search_start)
 
     do
     {
-        if (mcview_find (&vsm, search_start, mcview_get_filesize (view), &match_len))
+        if (mcview_find_shown (&vsm, search_start, mcview_get_filesize (view), &match_len))
         {
             mcview_search_show_result (view, match_len);
             found = TRUE;
@@ -762,7 +801,7 @@ mcview_do_search (WView *view, off_t want_search_start)
     // After mcview_may_still_grow (view) == FALSE, last chunk remains. Search there.
     if (view->growbuf_in_use && !found && view->search->error == MC_SEARCH_E_NOTFOUND
         && !mcview_search_options.backwards
-        && mcview_find (&vsm, search_start, mcview_get_filesize (view), &match_len))
+        && mcview_find_shown (&vsm, search_start, mcview_get_filesize (view), &match_len))
     {
         mcview_search_show_result (view, match_len);
         found = TRUE;
@@ -794,7 +833,7 @@ mcview_do_search (WView *view, off_t want_search_start)
                              mcview_search_status_update_cb, NULL);
 
             // search from file begin up to initial search start position
-            if (mcview_find (&vsm, 0, orig_search_start, &match_len))
+            if (mcview_find_shown (&vsm, 0, orig_search_start, &match_len))
             {
                 mcview_search_show_result (view, match_len);
                 found = TRUE;
