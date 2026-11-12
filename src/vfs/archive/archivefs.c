@@ -84,6 +84,12 @@ typedef struct
     off_t current_pos;  // the offset of the next byte of its data
     char *buf;          // ARCHIVE_BUF_SIZE bytes for reading the file (the input of libarchive)
     char *skip_buf;     // ARCHIVE_BUF_SIZE bytes for the data skipped in a file
+
+    // passwords of encrypted files given by the user, tried first for the next files
+    GPtrArray *passwords;
+    const char *entry_name;  // the name of the file being read, for the password dialog
+    gboolean password_asked; // a password has been asked for this file
+    gboolean password_cancelled;  // the password dialog has been cancelled: no error message
 } archive_super_t;
 
 /*** forward declarations (file scope functions) *************************************************/
@@ -151,6 +157,42 @@ arcfs_skip_cb (struct archive *a, void *data, la_int64_t request)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Ask the user the password of an encrypted file. libarchive calls this again while the
+ * password is wrong, and remembers the given ones for the next encrypted files.
+ */
+
+static const char *
+arcfs_passphrase_cb (struct archive *a, void *data)
+{
+    archive_super_t *arch = (archive_super_t *) data;
+    char *title;
+    char *password;
+
+    (void) a;
+
+    title = g_strdup_printf (arch->password_asked ? _ ("Wrong password, try again: %s")
+                                                  : _ ("Password for %s"),
+                             arch->entry_name != NULL ? arch->entry_name : arch->base.name);
+    password = vfs_get_password (title);
+    g_free (title);
+
+    if (password == NULL)
+    {
+        arch->password_cancelled = TRUE;
+        return NULL;
+    }
+
+    arch->password_asked = TRUE;
+
+    if (arch->passwords == NULL)
+        arch->passwords = g_ptr_array_new_with_free_func (g_free);
+    g_ptr_array_add (arch->passwords, password);
+
+    return password;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 static void
 arcfs_reader_close (archive_super_t *arch)
@@ -197,6 +239,16 @@ arcfs_reader_open (archive_super_t *arch)
     archive_read_set_seek_callback (arch->a, arcfs_seek_cb);
     archive_read_set_skip_callback (arch->a, arcfs_skip_cb);
     archive_read_set_callback_data (arch->a, arch);
+    archive_read_set_passphrase_callback (arch->a, arch, arcfs_passphrase_cb);
+
+    // the passwords given before
+    if (arch->passwords != NULL)
+    {
+        guint i;
+
+        for (i = 0; i < arch->passwords->len; i++)
+            archive_read_add_passphrase (arch->a, g_ptr_array_index (arch->passwords, i));
+    }
 
     if (archive_read_open1 (arch->a) != ARCHIVE_OK)
     {
@@ -435,6 +487,11 @@ arcfs_free_archive (struct vfs_class *me, struct vfs_s_super *super)
     arch->vpath = NULL;
     MC_PTR_FREE (arch->buf);
     MC_PTR_FREE (arch->skip_buf);
+    if (arch->passwords != NULL)
+    {
+        g_ptr_array_free (arch->passwords, TRUE);
+        arch->passwords = NULL;
+    }
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -550,6 +607,11 @@ arcfs_seek_data (struct vfs_class *me, struct vfs_s_super *super, struct vfs_s_i
 {
     archive_super_t *arch = ARCHIVE_SUPER (super);
 
+    // the data of an encrypted file is decrypted with the first read
+    arch->entry_name = ino->ent != NULL ? ino->ent->name : NULL;
+    arch->password_asked = FALSE;
+    arch->password_cancelled = FALSE;
+
     if (arch->a == NULL || arch->current != ino->data_offset || arch->current_pos > pos)
     {
         struct archive_entry *entry = NULL;
@@ -578,14 +640,6 @@ arcfs_seek_data (struct vfs_class *me, struct vfs_s_super *super, struct vfs_s_i
             }
         }
 
-        if (archive_entry_is_encrypted (entry))
-        {
-            message (D_ERROR, MSG_ERROR, _ ("Cannot read an encrypted file\n%s"),
-                     ino->ent != NULL ? ino->ent->name : "");
-            me->verrno = EACCES;
-            return FALSE;
-        }
-
         arch->current = ino->data_offset;
         arch->current_pos = 0;
     }
@@ -603,7 +657,7 @@ arcfs_seek_data (struct vfs_class *me, struct vfs_s_super *super, struct vfs_s_i
 
         if (n <= 0)
         {
-            if (n < 0)
+            if (n < 0 && !arch->password_cancelled)
                 message (D_ERROR, MSG_ERROR, _ ("Error reading archive\n%s\n%s"), super->name,
                          archive_error_string (arch->a));
             arcfs_reader_close (arch);
@@ -640,8 +694,9 @@ arcfs_read (void *fh, char *buffer, size_t count)
     n = archive_read_data (arch->a, buffer, count);
     if (n < 0)
     {
-        message (D_ERROR, MSG_ERROR, _ ("Error reading archive\n%s\n%s"), super->name,
-                 archive_error_string (arch->a));
+        if (!arch->password_cancelled)
+            message (D_ERROR, MSG_ERROR, _ ("Error reading archive\n%s\n%s"), super->name,
+                     archive_error_string (arch->a));
         arcfs_reader_close (arch);
         me->verrno = EIO;
         return -1;
