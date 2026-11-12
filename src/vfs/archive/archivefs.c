@@ -193,6 +193,19 @@ arcfs_passphrase_cb (struct archive *a, void *data)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/** The error message of libarchive: it may not set one. */
+
+static const char *
+arcfs_error_string (archive_super_t *arch)
+{
+    const char *s;
+
+    s = arch->a != NULL ? archive_error_string (arch->a) : NULL;
+
+    return s != NULL ? s : _ ("Unknown error");
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 static void
 arcfs_reader_close (archive_super_t *arch)
@@ -253,7 +266,7 @@ arcfs_reader_open (archive_super_t *arch)
     if (archive_read_open1 (arch->a) != ARCHIVE_OK)
     {
         message (D_ERROR, MSG_ERROR, _ ("Cannot open archive\n%s\n%s"), arch->base.name,
-                 archive_error_string (arch->a));
+                 arcfs_error_string (arch));
         arcfs_reader_close (arch);
         return FALSE;
     }
@@ -265,7 +278,8 @@ arcfs_reader_open (archive_super_t *arch)
 /**
  * Read the next header.
  *
- * @return ARCHIVE_OK (also for a warning), ARCHIVE_EOF, or an error
+ * @return ARCHIVE_OK (also for a warning), ARCHIVE_FAILED if only this entry cannot be read
+ *         (the next one can be), ARCHIVE_EOF, or an error
  */
 
 static int
@@ -276,7 +290,7 @@ arcfs_reader_next (archive_super_t *arch, struct archive_entry **entry)
     r = archive_read_next_header (arch->a, entry);
     if (r == ARCHIVE_WARN)
         r = ARCHIVE_OK;
-    if (r == ARCHIVE_OK)
+    if (r == ARCHIVE_OK || r == ARCHIVE_FAILED)
         arch->next++;
 
     return r;
@@ -505,6 +519,8 @@ arcfs_open_archive (struct vfs_s_super *super, const vfs_path_t *vpath,
     struct vfs_s_inode *root;
     struct stat st;
     int r;
+    char *bad_entry = NULL;
+    int failed_in_row = 0;
 
     super->name = g_strdup (vfs_path_as_str (vpath));
     arch->vpath = vfs_path_clone (vpath);
@@ -533,17 +549,30 @@ arcfs_open_archive (struct vfs_s_super *super, const vfs_path_t *vpath,
         const off_t index = arch->next;
 
         r = arcfs_reader_next (arch, &entry);
+        if (r == ARCHIVE_FAILED)
+        {
+            // leave out the entry, show the first error
+            if (bad_entry == NULL)
+                bad_entry = g_strdup (arcfs_error_string (arch));
+            if (++failed_in_row < 100)
+                continue;
+        }
         if (r != ARCHIVE_OK)
             break;
 
+        failed_in_row = 0;
         arcfs_add_entry (me, super, entry, index);
     }
+
+    if (r == ARCHIVE_EOF && bad_entry != NULL)
+        message (D_ERROR, MSG_ERROR, _ ("Error reading archive\n%s\n%s"), super->name, bad_entry);
+    g_free (bad_entry);
 
     if (r != ARCHIVE_EOF)
     {
         // show what has been read
         message (D_ERROR, MSG_ERROR, _ ("Error reading archive\n%s\n%s"), super->name,
-                 archive_error_string (arch->a));
+                 arcfs_error_string (arch));
         if (arch->next == 0)
         {
             arcfs_reader_close (arch);
@@ -629,11 +658,15 @@ arcfs_seek_data (struct vfs_class *me, struct vfs_s_super *super, struct vfs_s_i
         {
             const int r = arcfs_reader_next (arch, &entry);
 
+            // an entry left out from the tree
+            if (r == ARCHIVE_FAILED && arch->next <= ino->data_offset)
+                continue;
+
             if (r != ARCHIVE_OK)
             {
                 message (D_ERROR, MSG_ERROR, _ ("Error reading archive\n%s\n%s"), super->name,
                          r == ARCHIVE_EOF ? _ ("The archive has been changed.")
-                                          : archive_error_string (arch->a));
+                                          : arcfs_error_string (arch));
                 arcfs_reader_close (arch);
                 me->verrno = EIO;
                 return FALSE;
@@ -659,7 +692,7 @@ arcfs_seek_data (struct vfs_class *me, struct vfs_s_super *super, struct vfs_s_i
         {
             if (n < 0 && !arch->password_cancelled)
                 message (D_ERROR, MSG_ERROR, _ ("Error reading archive\n%s\n%s"), super->name,
-                         archive_error_string (arch->a));
+                         arcfs_error_string (arch));
             arcfs_reader_close (arch);
             me->verrno = EIO;
             return FALSE;
@@ -696,7 +729,7 @@ arcfs_read (void *fh, char *buffer, size_t count)
     {
         if (!arch->password_cancelled)
             message (D_ERROR, MSG_ERROR, _ ("Error reading archive\n%s\n%s"), super->name,
-                     archive_error_string (arch->a));
+                     arcfs_error_string (arch));
         arcfs_reader_close (arch);
         me->verrno = EIO;
         return -1;
