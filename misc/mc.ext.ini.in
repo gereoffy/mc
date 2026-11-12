@@ -288,7 +288,7 @@ View=%view{ascii} @EXTHELPERSDIR@/archive.sh view arj
 [cab]
 Shell=.cab
 ShellIgnoreCase=true
-Open=%cd %p/ucab://
+Open=%cd %p/@VFS_CAB@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view cab
 
 [ha]
@@ -300,7 +300,7 @@ View=%view{ascii} @EXTHELPERSDIR@/archive.sh view ha
 [rar]
 Regex=\\.r(ar|[0-9][0-9])$
 RegexIgnoreCase=true
-Open=%cd %p/urar://
+Open=%cd %p/@VFS_RAR@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view rar
 
 # ALZip
@@ -357,7 +357,7 @@ Include=cpio
 [7zip]
 Shell=.7z
 ShellIgnoreCase=true
-Open=%cd %p/u7z://
+Open=%cd %p/@VFS_7Z@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view 7z
 
 [patch]
@@ -423,7 +423,7 @@ View=%view{ascii} @EXTHELPERSDIR@/package.sh view deba
 [ISO9660]
 Shell=.iso
 ShellIgnoreCase=true
-Open=%cd %p/iso9660://
+Open=%cd %p/@VFS_ISO9660@://
 View=%view{ascii} @EXTHELPERSDIR@/misc.sh view iso9660
 
 [ar]
@@ -911,7 +911,7 @@ View=%view{ascii} @EXTHELPERSDIR@/archive.sh view arc
 [zip-by-shell]
 Shell=.zip
 ShellIgnoreCase=true
-Open=%cd %p/uzip://
+Open=%cd %p/@VFS_ZIP@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view zip
 
 [zoo]
@@ -1160,30 +1160,30 @@ View=%view{ascii} @EXTHELPERSDIR@/archive.sh view zst
 
 [zip-by-type]
 Type=\\(Zip archive
-Open=%cd %p/uzip://
+Open=%cd %p/@VFS_ZIP@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view zip
 
 [jar-war-by-type]
 Type=\\(Java (Jar file|archive) data \\((zip|JAR)\\)\\)
 TypeIgnoreCase=true
-Open=%cd %p/uzip://
+Open=%cd %p/@VFS_ZIP@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view zip
 
 [jar-war-by-regex]
 Regex=\\.[jw]ar$
 RegexIgnoreCase=true
-Open=%cd %p/uzip://
+Open=%cd %p/@VFS_ZIP@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view zip
 
 [apk]
 Type=Android package \\(APK\\)
 TypeIgnoreCase=true
-Open=%cd %p/uzip://
+Open=%cd %p/@VFS_ZIP@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view zip
 
 [lha]
 Type=^LHa .*archive
-Open=%cd %p/ulha://
+Open=%cd %p/@VFS_LHA@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view lha
 
 [pak]

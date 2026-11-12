@@ -595,6 +595,7 @@ src/filemanager/Makefile
 
 src/vfs/Makefile
 
+src/vfs/archive/Makefile
 src/vfs/btrfs/Makefile
 src/vfs/cpio/Makefile
 

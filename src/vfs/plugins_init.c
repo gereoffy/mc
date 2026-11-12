@@ -38,6 +38,10 @@
 
 #include "local/local.h"
 
+#ifdef ENABLE_VFS_ARCHIVE
+#include "archive/archivefs.h"
+#endif
+
 #ifdef ENABLE_VFS_BTRFS
 #include "btrfs/btrfs.h"
 #endif
@@ -93,6 +97,9 @@ vfs_plugins_init (void)
     // localfs needs to be the first one
     vfs_init_localfs ();
 
+#ifdef ENABLE_VFS_ARCHIVE
+    vfs_init_archivefs ();
+#endif
 #ifdef ENABLE_VFS_BTRFS
     vfs_init_btrfs ();
 #endif
