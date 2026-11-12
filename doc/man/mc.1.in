@@ -3239,7 +3239,10 @@ used to manipulate tar and compressed tar files; the
 (for manipulating files over shell connections such as rsh and ssh).
 If the code was compiled with
 .I sftpfs
-(for manipulating files over SFTP connections).
+(for manipulating files over SFTP connections). If the code was compiled
+with libarchive, the
+.I archivefs
+(for reading zip, 7z, rar, iso9660 and other archives).
 .PP
 A generic
 .I extfs
@@ -3320,6 +3323,22 @@ Examples:
 .fi
 .PP
 The latter specifies the full path of the tar archive.
+.\"NODE "  Archive File System"
+.SH "  Archive File System"
+The archive file system provides read\-only access to the archives read
+by the libarchive library: zip (and jar, apk, ...), 7z, rar, cab, lha,
+iso9660 and others, also when they are compressed or inside another
+archive. It is available if Midnight Commander was compiled with
+libarchive; then the mc.ext.ini file uses it for these archives instead
+of the extfs helpers, so no external programs are needed. The syntax is:
+.PP
+.I /filename.zip/uarchive://[dir\-inside\-archive]
+.PP
+The files are read directly from the archive. Encrypted files cannot be
+read. As libarchive reads an archive sequentially, reading a file before
+the one read last starts reading the archive from its start again (for
+a zip archive, only its central directory), which can be slow in a big
+solid 7z or rar archive.
 .\"NODE "  FIle transfer over SHell filesystem"
 .SH "  FIle transfer over SHell filesystem"
 The shell file system is a network based file system that allows you to
