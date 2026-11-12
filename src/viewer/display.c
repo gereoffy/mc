@@ -145,6 +145,8 @@ mcview_display_status (WView *view)
     const WRect *r = &view->status_area;
     const gboolean filtered = mcview_filter_on (view);
     const char *file_label;
+    char *position;
+    int label_width;
 
     if (r->lines < 1)
         return;
@@ -156,50 +158,55 @@ mcview_display_status (WView *view)
         : view->command != NULL               ? view->command
                                               : "";
 
+    // the position: right of the file name, left of the percent
+    if (view->mode_flags.hex)
+        position = g_strdup_printf ("0x%08" PRIxMAX, (uintmax_t) view->hex_cursor);
+    else if (filtered)
+        position = mcview_filter_position (view);
+    else
+    {
+        // the first and the last offset on the screen, and the size
+        char buffer[BUF_TRUNC_LEN + 1];
+        char *range;
+
+        size_trunc_len (buffer, BUF_TRUNC_LEN, mcview_get_filesize (view), 0,
+                        panels_options.kilobyte_si);
+        range = g_strdup_printf ("%" PRIuMAX "-%" PRIuMAX, (uintmax_t) view->dpy_start,
+                                 (uintmax_t) view->dpy_end);
+        position = g_strdup_printf (
+            "%9s/%s%s %s", range, buffer, mcview_may_still_grow (view) ? "+" : " ",
+            mc_global.source_codepage >= 0 ? get_codepage_id (mc_global.source_codepage) : "");
+        g_free (range);
+    }
+
     if (r->cols > 40)
     {
-        widget_gotoyx (view, r->y, r->cols - 32);
-        if (view->mode_flags.hex)
-            tty_printf ("0x%08" PRIxMAX, (uintmax_t) view->hex_cursor);
-        else if (filtered)
-        {
-            char *position = mcview_filter_position (view);
+        // 27 columns, more for big numbers
+        const int position_width = MAX (27, str_term_width1 (position));
 
-            tty_printf ("%-27s", position);
-            g_free (position);
-        }
-        else
-        {
-            char buffer[BUF_TRUNC_LEN + 1];
-
-            size_trunc_len (buffer, BUF_TRUNC_LEN, mcview_get_filesize (view), 0,
-                            panels_options.kilobyte_si);
-            tty_printf ("%9" PRIuMAX "/%s%s %s", (uintmax_t) view->dpy_end, buffer,
-                        mcview_may_still_grow (view) ? "+" : " ",
-                        mc_global.source_codepage >= 0 ? get_codepage_id (mc_global.source_codepage)
-                                                       : "");
-        }
+        label_width = MAX (0, r->cols - 7 - position_width);
+        widget_gotoyx (view, r->y, r->cols - 5 - position_width);
+        tty_print_string (position);
     }
+    else
+        label_width = r->cols - 5;
+    g_free (position);
+
     widget_gotoyx (view, r->y, r->x);
+    if (!filtered)
+        tty_print_string (str_fit_to_term (file_label, label_width, J_LEFT_FIT));
+    else
     {
-        const int width = r->cols > 40 ? r->cols - 34 : r->cols - 5;
+        // the file name, shortened if needed, then the filter
+        char *filter_label;
+        int filter_width;
 
-        if (!filtered)
-            tty_print_string (str_fit_to_term (file_label, width, J_LEFT_FIT));
-        else
-        {
-            // the file name, shortened if needed, then the filter
-            char *filter_label;
-            int filter_width;
-
-            filter_label = g_strdup_printf (view->filter_invert ? _ (" | Filter: not %s")
-                                                                : _ (" | Filter: %s"),
-                                            view->filter_text);
-            filter_width = MIN (str_term_width1 (filter_label), width);
-            tty_print_string (str_fit_to_term (file_label, width - filter_width, J_LEFT_FIT));
-            tty_print_string (str_fit_to_term (filter_label, filter_width, J_LEFT_FIT));
-            g_free (filter_label);
-        }
+        filter_label = g_strdup_printf (
+            view->filter_invert ? _ (" | Filter: not %s") : _ (" | Filter: %s"), view->filter_text);
+        filter_width = MIN (str_term_width1 (filter_label), label_width);
+        tty_print_string (str_fit_to_term (file_label, label_width - filter_width, J_LEFT_FIT));
+        tty_print_string (str_fit_to_term (filter_label, filter_width, J_LEFT_FIT));
+        g_free (filter_label);
     }
     if (r->cols > 26)
         mcview_display_percent (
