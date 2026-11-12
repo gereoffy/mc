@@ -191,6 +191,20 @@ struct WView
     int *dir_idx;            /* Index of current file in dir structure.
                               * Pointer is used here as reference to WPanel::dir::count */
     vfs_path_t *ext_script;  // Temporary script file created by regex_command_for()
+
+    // line filter (F6): only the lines containing the filter string are shown
+    GString *filter;             // the string to look for (lower case if caseless), NULL if off
+    char *filter_text;           // the filter as typed, for the status line
+    gboolean filter_caseless;    // match ASCII letters case insensitively
+    gboolean filter_invert;      // show the lines without the string
+    GArray *filter_lines;        // off_t: the start of the matching lines found so far, ascending
+    off_t filter_scanned;        // the lines before this offset have been looked at
+    gboolean filter_complete;    // all the data has been looked at
+    gboolean filter_stopped;     // the user stopped looking at the data
+    gboolean filter_scanning;    // looking at the data now (don't start it again from a redraw)
+    gboolean filter_saved_wrap;  // wrap mode before the filter was set
+    guint filter_top;            // the index of the matching line at the top of the screen
+    guint filter_shown;          // the number of the matching lines on the screen
 };
 
 typedef struct mcview_nroff_struct
@@ -268,6 +282,17 @@ void mcview_display_frame (const WView *view);
 void mcview_display_clean (WView *view);
 void mcview_display_ruler (WView *view);
 
+/* filter.c: */
+gboolean mcview_filter_on (const WView *view);
+void mcview_filter_dialog (WView *view);
+void mcview_filter_clear (WView *view);
+guint mcview_filter_find (WView *view, off_t offset);
+guint mcview_filter_count (WView *view, guint count);
+off_t mcview_filter_line (const WView *view, guint index);
+gboolean mcview_filter_hides (WView *view, off_t offset);
+char *mcview_filter_position (const WView *view);
+int mcview_filter_percent (const WView *view);
+
 /* growbuf.c: */
 void mcview_growbuf_init (WView *view);
 void mcview_growbuf_done (WView *view);
@@ -332,6 +357,9 @@ mc_search_cbret_t mcview_search_cmd_callback (const void *user_data, off_t char_
                                               int *current_char);
 mc_search_cbret_t mcview_search_update_cmd_callback (const void *user_data, off_t char_offset);
 void mcview_search (WView *view, gboolean start_search);
+const char *mcview_fast_search_find (const char *hay, gsize hay_len, const char *needle,
+                                     gsize needle_len, gboolean caseless);
+gssize mcview_fast_search_read (WView *view, off_t pos, char *buf, size_t len);
 
 /* --------------------------------------------------------------------------------------------- */
 /*** inline functions ****************************************************************************/

@@ -806,6 +806,79 @@ mcview_wrap_fixup (WView *view)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Show the matching lines of the filter (unwrapped), from the first one at dpy_start or after
+ * it. Like without the filter, the screen is filled up to its bottom if there are enough lines.
+ */
+static void
+mcview_display_filtered (WView *view)
+{
+    const WRect *r = &view->data_area;
+    const guint rows = (guint) r->lines;
+    guint idx, count;
+    int row = 0;
+    mcview_state_machine_t state;
+
+    idx = mcview_filter_find (view, view->dpy_start);
+    count = mcview_filter_count (view, idx + rows);
+    if (idx + rows > count)
+        idx = count > rows ? count - rows : 0;
+
+    mcview_display_clean (view);
+    mcview_display_ruler (view);
+
+    if (count != 0)
+        view->dpy_start = mcview_filter_line (view, idx);
+    mcview_state_machine_init (&state, view->dpy_start);
+
+    view->filter_top = idx;
+    for (; row < r->lines && idx < count; row++, idx++)
+    {
+        mcview_state_machine_init (&state, mcview_filter_line (view, idx));
+        mcview_display_paragraph (view, &state, row);
+    }
+
+    view->filter_shown = (guint) row;
+    view->dpy_end = state.offset;
+    view->dpy_state_bottom = state;
+
+    tty_setcolor (VIEWER_NORMAL_COLOR);
+    if (mcview_show_eof != NULL && mcview_show_eof[0] != '\0')
+        for (; row < r->lines; row++)
+        {
+            widget_gotoyx (view, r->y + row, r->x);
+            tty_print_string (mcview_show_eof);
+        }
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/** Move the filtered view by @lines lines (down if positive), at most to the last screen. */
+
+static void
+mcview_filter_move (WView *view, off_t lines)
+{
+    const guint rows = (guint) view->data_area.lines;
+    const guint n = (guint) MIN (ABS (lines), (off_t) (G_MAXUINT / 4));
+    guint idx, count, last_top;
+
+    idx = mcview_filter_find (view, view->dpy_start);
+
+    if (lines < 0)
+        idx = idx > n ? idx - n : 0;
+    else
+        idx += n;
+
+    count = mcview_filter_count (view, idx + rows);
+    last_top = count > rows ? count - rows : 0;
+    idx = MIN (idx, last_top);
+
+    if (count != 0)
+        view->dpy_start = mcview_filter_line (view, idx);
+    view->dpy_paragraph_skip_lines = 0;
+    view->dpy_wrap_dirty = TRUE;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /*** public functions ****************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
 
@@ -827,6 +900,12 @@ mcview_display_text (WView *view)
     int row;
     mcview_state_machine_t state;
     gboolean again;
+
+    if (mcview_filter_on (view))
+    {
+        mcview_display_filtered (view);
+        return;
+    }
 
     do
     {
@@ -895,6 +974,12 @@ mcview_display_text (WView *view)
 void
 mcview_ascii_move_down (WView *view, off_t lines)
 {
+    if (mcview_filter_on (view))
+    {
+        mcview_filter_move (view, lines);
+        return;
+    }
+
     while (lines-- != 0)
     {
         gboolean paragraph_ended;
@@ -944,6 +1029,12 @@ mcview_ascii_move_down (WView *view, off_t lines)
 void
 mcview_ascii_move_up (WView *view, off_t lines)
 {
+    if (mcview_filter_on (view))
+    {
+        mcview_filter_move (view, -lines);
+        return;
+    }
+
     if (!view->mode_flags.wrap)
     {
         while (lines-- != 0)

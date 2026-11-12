@@ -532,6 +532,7 @@ static const global_keymap_ini_t default_viewer_keymap[] = {
     { "Quit", "f3; f10; q; esc" },
     { "HexMode", "f4" },
     { "Goto", "f5" },
+    { "Filter", "f6" },
     { "Search", "f7" },
     { "SearchContinue", "f17; n" },
     { "MagicMode", "f8" },

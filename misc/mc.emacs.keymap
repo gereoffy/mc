@@ -398,6 +398,7 @@ WrapMode = f2
 Quit = f3; f10; q; esc
 HexMode = f4
 Goto = f5
+Filter = f6
 Search = f7
 SearchForward = slash
 SearchBackward = question
