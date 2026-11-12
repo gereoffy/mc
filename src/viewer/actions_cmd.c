@@ -425,6 +425,10 @@ mcview_execute_cmd (WView *view, long command)
         mcview_hexedit_save_changes (view);
         break;
     case CK_Search:
+        /* The Backwards option is kept from the last search, maybe of another file: at the start
+         * of the file it would find nothing, so search forward. */
+        if ((view->mode_flags.hex ? view->hex_cursor : view->dpy_start) == 0)
+            mcview_search_options.backwards = FALSE;
         mcview_search (view, TRUE);
         break;
     case CK_SearchContinue:
