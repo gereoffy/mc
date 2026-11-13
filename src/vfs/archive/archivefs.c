@@ -67,6 +67,10 @@
 // size of the reads of the archive file
 #define ARCHIVE_BUF_SIZE (64 * 1024)
 
+// the start of the last read file kept in memory: it is read again and again (the type of the
+// file, the viewer), and reading it again from a compressed archive would decompress it again
+#define ARCHIVE_HEAD_SIZE (1024 * 1024)
+
 /*** file scope type declarations ****************************************************************/
 
 typedef struct
@@ -82,6 +86,10 @@ typedef struct
     off_t next;         // the index of the next header to be read
     off_t current;      // the index of the entry whose data is read, -1 if none
     off_t current_pos;  // the offset of the next byte of its data
+
+    off_t head_entry;  // the index of the entry whose start is in head, -1 if none
+    char *head;        // the first head_len bytes of its data
+    size_t head_len;
     char *buf;          // ARCHIVE_BUF_SIZE bytes for reading the file (the input of libarchive)
     char *skip_buf;     // ARCHIVE_BUF_SIZE bytes for the data skipped in a file
 
@@ -483,6 +491,7 @@ arcfs_new_archive (struct vfs_class *me)
     arch->base.me = me;
     arch->fd = -1;
     arch->current = -1;
+    arch->head_entry = -1;
 
     return VFS_SUPER (arch);
 }
@@ -501,6 +510,7 @@ arcfs_free_archive (struct vfs_class *me, struct vfs_s_super *super)
     arch->vpath = NULL;
     MC_PTR_FREE (arch->buf);
     MC_PTR_FREE (arch->skip_buf);
+    MC_PTR_FREE (arch->head);
     if (arch->passwords != NULL)
     {
         g_ptr_array_free (arch->passwords, TRUE);
@@ -625,6 +635,34 @@ arcfs_super_same (const vfs_path_element_t *vpath_element, struct vfs_s_super *p
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/** Keep the start of the data of the current entry: @n bytes read from current_pos. */
+
+static void
+arcfs_keep_head (archive_super_t *arch, const char *data, size_t n)
+{
+    const off_t end = arch->current_pos + (off_t) n;
+    size_t len;
+
+    if (arch->head_entry != arch->current)
+    {
+        arch->head_entry = arch->current;
+        arch->head_len = 0;
+    }
+
+    // only the continuation of the kept data
+    if (arch->current_pos > (off_t) arch->head_len || end <= (off_t) arch->head_len
+        || arch->head_len >= ARCHIVE_HEAD_SIZE)
+        return;
+
+    len = (size_t) MIN (end, (off_t) ARCHIVE_HEAD_SIZE) - arch->head_len;
+
+    if (arch->head == NULL)
+        arch->head = g_malloc (ARCHIVE_HEAD_SIZE);
+    memcpy (arch->head + arch->head_len, data + (arch->head_len - (size_t) arch->current_pos), len);
+    arch->head_len += len;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /**
  * Make the reader ready to read the data of @ino from offset @pos: read the headers up to it
  * (from the start of the archive if it has been passed), and skip the data before @pos.
@@ -697,6 +735,7 @@ arcfs_seek_data (struct vfs_class *me, struct vfs_s_super *super, struct vfs_s_i
             me->verrno = EIO;
             return FALSE;
         }
+        arcfs_keep_head (arch, arch->skip_buf, (size_t) n);
         arch->current_pos += n;
     }
 
@@ -721,6 +760,15 @@ arcfs_read (void *fh, char *buffer, size_t count)
     if (count == 0 || file->pos >= file->ino->st.st_size)
         return 0;
 
+    // from the kept start of the file, without moving the reader
+    if (file->ino->data_offset == arch->head_entry && file->pos < (off_t) arch->head_len)
+    {
+        n = (la_ssize_t) MIN (count, arch->head_len - (size_t) file->pos);
+        memcpy (buffer, arch->head + file->pos, (size_t) n);
+        file->pos += n;
+        return (ssize_t) n;
+    }
+
     if (!arcfs_seek_data (me, super, file->ino, file->pos))
         return -1;
 
@@ -735,6 +783,7 @@ arcfs_read (void *fh, char *buffer, size_t count)
         return -1;
     }
 
+    arcfs_keep_head (arch, buffer, (size_t) n);
     arch->current_pos += n;
     file->pos += n;
 
