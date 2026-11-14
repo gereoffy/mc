@@ -251,8 +251,8 @@ static void
 compare_dir (WPanel *panel, const WPanel *other, enum CompareMode mode)
 {
     // the same file in both panels: the same directory, or hard links
-    const gboolean same_vfs =
-        vfs_path_get_last_path_vfs (panel->cwd_vpath) == vfs_path_get_last_path_vfs (other->cwd_vpath);
+    const gboolean same_vfs = vfs_path_get_last_path_vfs (panel->cwd_vpath)
+        == vfs_path_get_last_path_vfs (other->cwd_vpath);
     int i, j;
 
     // No marks by default
