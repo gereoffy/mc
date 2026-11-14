@@ -4,7 +4,7 @@ send_read_data() {
 	done
 	[ "$bs" -gt 511 ] || bs=1
 	count=`expr "$SHELL_FILESIZE" / "$bs"`
-	dd bs="$bs" count="$count" 2>/dev/null
+	dd bs="$bs" count="$count" ${SHELL_HAVE_POSIX_DD+iflag=fullblock} 2>/dev/null
 }
 
 send_piece() {
@@ -23,7 +23,13 @@ send_piece() {
 append_for_real() {
 	>> "$FILENAME" || { echo "### 500 Could not reopen $FILENAME for appending"; return 1; }
 	echo "### 001"
-	bs=1048576
+	# without iflag=fullblock a read of a big block from a pipe returns less, and dd
+	# stops after count reads: small blocks then, as a pipe gives 4 KiB at least
+	if [ -n "${SHELL_HAVE_POSIX_DD-}" ]; then
+		bs=1048576
+	else
+		bs=4096
+	fi
 	_err=""
 	while [ "$SHELL_FILESIZE" -gt 0 ]; do
 		eval "`send_piece`"
