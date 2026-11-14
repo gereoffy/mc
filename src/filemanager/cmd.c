@@ -250,6 +250,9 @@ compare_files (const vfs_path_t *vpath1, const vfs_path_t *vpath2, off_t size)
 static void
 compare_dir (WPanel *panel, const WPanel *other, enum CompareMode mode)
 {
+    // the same file in both panels: the same directory, or hard links
+    const gboolean same_vfs = vfs_path_get_last_path_vfs (panel->cwd_vpath)
+        == vfs_path_get_last_path_vfs (other->cwd_vpath);
     int i, j;
 
     // No marks by default
@@ -319,6 +322,11 @@ compare_dir (WPanel *panel, const WPanel *other, enum CompareMode mode)
 
                 continue;
             }
+
+            // the same file: no need to read it (a VFS without inode numbers gives 0)
+            if (same_vfs && source->st.st_ino != 0 && source->st.st_ino == target->st.st_ino
+                && source->st.st_dev == target->st.st_dev)
+                continue;
 
             // Thorough compare on, do byte-by-byte comparison
             {
