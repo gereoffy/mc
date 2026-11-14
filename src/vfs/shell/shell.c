@@ -122,7 +122,9 @@ int shell_directory_timeout = 900;
 #define SHELL_FILE_HANDLER(fh) ((shell_file_handler_t *) fh)
 
 // the size of the pieces of a written file sent at once (by the send or append script)
-#define SHELL_STREAM_SIZE (16 * 1024 * 1024)
+// (each piece is a new command: smaller ones are slower on a fast network, bigger ones show the
+// progress less often on a slow one)
+#define SHELL_STREAM_SIZE (4 * 1024 * 1024)
 
 /*** file scope type declarations ****************************************************************/
 
