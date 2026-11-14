@@ -3059,6 +3059,11 @@ Recoding is made from selected codepage into system codepage. To
 cancel the recoding you may select "<No translation>" in charset
 selection dialog.
 .PP
+The viewer checks the size of the file every second. If the file grows
+(e.g. a log file) while its end is shown, the viewer moves to the new end,
+like tail \-f; this works with the filter (F6) too, then the new matching
+lines are shown. Otherwise only the size on the status line changes.
+.PP
 It's possible to instruct the file viewer how to display a file, look
 at the
 .\"LINK2"

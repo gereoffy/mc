@@ -78,6 +78,7 @@ int tty_keyname_to_keycode (const char *name, char **label);
 char *tty_keycode_to_keyname (const int keycode);
 /* mouse support */
 int tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block);
+void tty_tick_use (gboolean use);
 gboolean is_idle (void);
 int tty_getch (void);
 

@@ -92,6 +92,10 @@
 int mou_auto_repeat = 100;     // ms
 int double_click_speed = 250;  // ms
 gboolean old_esc_mode = TRUE;
+/* the number of the users of the tick: tty_get_event() returns EV_NONE every second while
+   there is any (to check something, e.g. the size of a viewed file, without a key press) */
+static int tty_tick_users = 0;
+
 /* timeout for old_esc_mode in usec */
 int old_esc_mode_timeout = G_USEC_PER_SEC;  // us, settable via env
 
@@ -1308,6 +1312,21 @@ lookup_keycode (const int code, int *idx)
 /* --------------------------------------------------------------------------------------------- */
 /*** public functions ****************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Ask (or stop asking) tty_get_event() to return EV_NONE every second, so that the idle hooks
+ * run without a key press.
+ */
+
+void
+tty_tick_use (gboolean use)
+{
+    if (use)
+        tty_tick_users++;
+    else if (tty_tick_users > 0)
+        tty_tick_users--;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /* This has to be called before init_slang or whatever routine
    calls any define_sequence */
 
@@ -1896,6 +1915,7 @@ tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
 #endif
     struct timeval time_out;
     struct timeval *time_addr = NULL;
+    gboolean tick = FALSE;
     static int dirty = 3;
 
     if ((dirty == 3) || is_idle ())
@@ -1981,6 +2001,14 @@ tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
                 time_out.tv_usec = 0;
                 time_addr = &time_out;
             }
+
+            if (tty_tick_users > 0 && (time_addr == NULL || time_out.tv_sec >= 1))
+            {
+                time_out.tv_sec = 1;
+                time_out.tv_usec = 0;
+                time_addr = &time_out;
+                tick = TRUE;
+            }
         }
 
         if (!block || tty_got_winch ())
@@ -2006,6 +2034,8 @@ tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
             if (!block || tty_got_winch ())
                 return EV_NONE;
             vfs_timeout_handler ();
+            if (tick)
+                return EV_NONE;
         }
         if (flag == -1 && errno == EINTR)
             return EV_NONE;
