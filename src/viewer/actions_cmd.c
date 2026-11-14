@@ -463,6 +463,10 @@ mcview_execute_cmd (WView *view, long command)
     case CK_Filter:
         mcview_filter_dialog (view);
         break;
+    case CK_FilterOff:
+        if (mcview_filter_on (view))
+            mcview_filter_clear (view);
+        break;
     case CK_WrapMode:
         // Toggle between wrapped and unwrapped view
         mcview_toggle_wrap_mode (view);

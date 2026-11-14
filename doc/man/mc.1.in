@@ -2986,7 +2986,7 @@ are shown, so the first ones are shown at once even in a big file. The
 status line shows the filter and the number of the lines found ("+" if
 the end of the file has not been reached yet). The search finds the
 matches in these lines only, and the wrap mode is off. An empty string
-shows all lines again.
+or Shift\-F6 (F16) shows all lines again.
 .TP
 .B F7, /, ?
 Start search. These keys call the dialog window that allows you to set up
