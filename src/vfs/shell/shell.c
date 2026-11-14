@@ -151,6 +151,7 @@ typedef struct
     char *scr_info;
     int host_flags;
     GString *scr_env;
+    int linear_files;  // the files opened for a linear read: they use the connection
 } shell_super_t;
 
 typedef struct
@@ -167,6 +168,8 @@ typedef struct
     size_t stream_len;
     off_t stream_sent;   // the number of the bytes sent
     gboolean stream_error;
+
+    gboolean linear;  // counted in linear_files of the super
 } shell_file_handler_t;
 
 /*** forward declarations (file scope functions) *************************************************/
@@ -1192,6 +1195,12 @@ shell_fh_close (struct vfs_class *me, vfs_file_handler_t *fh)
     shell_file_handler_t *shell = SHELL_FILE_HANDLER (fh);
     int res = 0;
 
+    if (shell->linear)
+    {
+        SHELL_SUPER (VFS_FILE_HANDLER_SUPER (fh))->linear_files--;
+        shell->linear = FALSE;
+    }
+
     if (!shell->stream)
         return 0;
 
@@ -1768,8 +1777,26 @@ shell_fh_open (struct vfs_class *me, vfs_file_handler_t *fh, int flags, mode_t m
         if ((flags & O_APPEND) != 0)
             shell->append = TRUE;
 
-        // send the data while it is written, no local copy
-        shell->stream = TRUE;
+        /* Send the data while it is written, no local copy. Not while a file is read from the
+           same connection (a copy within the host): store a local copy when it is closed. */
+        if (SHELL_SUPER (VFS_FILE_HANDLER_SUPER (fh))->linear_files == 0)
+        {
+            shell->stream = TRUE;
+            return 0;
+        }
+
+        if (fh->ino->localname == NULL)
+        {
+            vfs_path_t *vpath = NULL;
+            int tmp_handle;
+
+            tmp_handle = vfs_mkstemps (&vpath, me->name, fh->ino->ent->name);
+            if (tmp_handle == -1)
+                return (-1);
+
+            fh->ino->localname = vfs_path_free (vpath, FALSE);
+            close (tmp_handle);
+        }
         return 0;
     }
 
@@ -1826,6 +1853,8 @@ shell_fill_names (struct vfs_class *me, fill_names_f func)
 static void *
 shell_open (const vfs_path_t *vpath, int flags, mode_t mode)
 {
+    void *fh;
+
     if ((flags & O_WRONLY) != 0)
     {
         // We need to check if the path is writable to return the error ASAP
@@ -1853,7 +1882,16 @@ shell_open (const vfs_path_t *vpath, int flags, mode_t mode)
        cause shell don't able to open files with O_EXCL flag
      */
     flags &= ~O_EXCL;
-    return vfs_s_open (vpath, flags, mode);
+    fh = vfs_s_open (vpath, flags, mode);
+
+    // a linear read uses the connection until the file is closed
+    if (fh != NULL && VFS_FILE_HANDLER (fh)->linear != LS_NOT_LINEAR)
+    {
+        SHELL_FILE_HANDLER (fh)->linear = TRUE;
+        SHELL_SUPER (VFS_FILE_HANDLER_SUPER (fh))->linear_files++;
+    }
+
+    return fh;
 }
 
 /* --------------------------------------------------------------------------------------------- */
