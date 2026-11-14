@@ -223,42 +223,42 @@ View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.bzip
 
 [tar.bzip2]
 Regex=\\.t(ar\\.bz2|bz2?|b2)$
-Open=%cd %p/utar://
+Open=%cd %p/@VFS_TARC@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.bzip2
 
 # .tar.lzma, .tlz
 [tar.lzma]
 Regex=\\.t(ar\\.lzma|lz)$
-Open=%cd %p/utar://
+Open=%cd %p/@VFS_TARC@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.lzma
 
 [tar.lz]
 Shell=.tar.lz
-Open=%cd %p/utar://
+Open=%cd %p/@VFS_TARC@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.lz
 
 # .tar.lz4, .tlz4
 [tar.lz4]
 Regex=\\.t(ar\\.lz4|lz4)$
-Open=%cd %p/utar://
+Open=%cd %p/@VFS_TARC@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.lz4
 
 # .tar.lzo, .tzo
 [tar.lzo]
 Regex=\\.t(ar\\.lzo|zo)$
-Open=%cd %p/utar://
+Open=%cd %p/@VFS_TARC@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.lzo
 
 # .tar.xz, .txz
 [tar.xz]
 Regex=\\.t(ar\\.xz|xz)$
-Open=%cd %p/utar://
+Open=%cd %p/@VFS_TARC@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.xz
 
 # .tar.zst, .tzst
 [tar.zst]
 Regex=\\.t(ar\\.zst|zst)$
-Open=%cd %p/utar://
+Open=%cd %p/@VFS_TARC@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.zst
 
 # .tar.F - used on QNX
@@ -270,7 +270,7 @@ View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.F
 # .qpr/.qpk - QNX Neutrino package installer files
 [tar.qpr]
 Regex=\\.qp[rk]$
-Open=%cd %p/utar://
+Open=%cd %p/@VFS_TARC@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.qpr
 
 [tar]
@@ -1201,7 +1201,7 @@ Open=@EXTHELPERSDIR@/archive.sh open par2
 # Includes should be at end of the bindings
 
 [Include/tar.gz]
-Open=%cd %p/utar://
+Open=%cd %p/@VFS_TARC@://
 View=%view{ascii} @EXTHELPERSDIR@/archive.sh view tar.gz
 
 [Include/cpio]
