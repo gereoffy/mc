@@ -230,7 +230,15 @@ mcview_filter_scan_chunk (WView *view, char **buf, size_t *size)
 
     view->filter_scanned = start + (off_t) used;
     if (eof)
+    {
+        size_t tail;
+
+        // a line without a newline at the end may go on if the file grows
+        for (tail = used; tail > 0 && (*buf)[tail - 1] != '\n'; tail--)
+            ;
+        view->filter_tail = start + (off_t) tail;
         view->filter_complete = TRUE;
+    }
 
     return TRUE;
 }
@@ -516,6 +524,34 @@ mcview_filter_percent (const WView *view)
         return -1;
 
     return (int) ((guint64) (view->filter_top + view->filter_shown) * 100 / count);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/** The size of the file has changed from @old_size: look at the new data too. */
+
+void
+mcview_filter_file_changed (WView *view, off_t old_size)
+{
+    if (!mcview_filter_on (view) || view->filter_stopped)
+        return;
+
+    if (mcview_get_filesize (view) < old_size)
+    {
+        // truncated or rewritten: look at it again
+        g_array_set_size (view->filter_lines, 0);
+        view->filter_scanned = 0;
+    }
+    else if (view->filter_complete)
+    {
+        // the last line may go on now: look at it again
+        while (view->filter_lines->len > 0
+               && g_array_index (view->filter_lines, off_t, view->filter_lines->len - 1)
+                   >= view->filter_tail)
+            g_array_set_size (view->filter_lines, view->filter_lines->len - 1);
+        view->filter_scanned = view->filter_tail;
+    }
+
+    view->filter_complete = FALSE;
 }
 
 /* --------------------------------------------------------------------------------------------- */

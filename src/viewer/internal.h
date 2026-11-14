@@ -200,6 +200,7 @@ struct WView
     GArray *filter_lines;        // off_t: the start of the matching lines found so far, ascending
     off_t filter_scanned;        // the lines before this offset have been looked at
     gboolean filter_complete;    // all the data has been looked at
+    off_t filter_tail;           // complete: the start of the last line if it has no newline
     gboolean filter_stopped;     // the user stopped looking at the data
     gboolean filter_scanning;    // looking at the data now (don't start it again from a redraw)
     gboolean filter_saved_wrap;  // wrap mode before the filter was set
@@ -292,6 +293,7 @@ off_t mcview_filter_line (const WView *view, guint index);
 gboolean mcview_filter_hides (WView *view, off_t offset);
 char *mcview_filter_position (const WView *view);
 int mcview_filter_percent (const WView *view);
+void mcview_filter_file_changed (WView *view, off_t old_size);
 
 /* growbuf.c: */
 void mcview_growbuf_init (WView *view);

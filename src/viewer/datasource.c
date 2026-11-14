@@ -58,6 +58,7 @@
 #include "lib/vfs/vfs.h"
 #include "lib/util.h"
 #include "lib/widget.h"  // D_NORMAL, D_ERROR
+#include "lib/tty/key.h"  // tty_tick_use()
 
 #include "internal.h"
 
@@ -71,8 +72,101 @@
 
 /*** file scope variables ************************************************************************/
 
+// the viewers of files: they follow the growth of their files (tail -f)
+static GList *mcview_follow_views = NULL;
+
 /* --------------------------------------------------------------------------------------------- */
 /*** file scope functions ************************************************************************/
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Has the file of the viewer changed size? Show its new end if the end was shown (like tail -f),
+ * else only update the status line.
+ */
+
+static void
+mcview_follow_file (WView *view)
+{
+    const off_t old_size = view->ds_file_filesize;
+    struct stat st;
+    gboolean at_end;
+
+    // not under another dialog (a viewer in a panel: not under a menu, etc. either)
+    if (top_dlg == NULL || GROUP (top_dlg->data) != WIDGET (view)->owner
+        || !widget_get_state (WIDGET (view), WST_VISIBLE))
+        return;
+
+    if (mc_fstat (view->ds_file_fd, &st) == -1 || st.st_size == old_size)
+        return;
+
+    // the end is shown: also if the shown part is shorter than the screen
+    if (view->mode_flags.hex)
+        at_end = view->hex_cursor >= old_size - 1;
+    else if (mcview_filter_on (view))
+        at_end = view->filter_complete
+            && view->filter_top + view->filter_shown >= view->filter_lines->len;
+    else
+        at_end = view->dpy_end >= old_size;
+
+    view->ds_file_filesize = st.st_size;
+    view->ds_file_datalen = 0;  // the cached data may be shorter or changed
+    mcview_filter_file_changed (view, old_size);
+
+    if (st.st_size < old_size)
+        // truncated (rotated log): don't stay after the end
+        at_end = (view->mode_flags.hex ? view->hex_cursor : view->dpy_start) >= st.st_size;
+
+    if (at_end)
+        mcview_moveto_bottom (view);
+
+    view->dirty++;
+    widget_draw (WIDGET (view));
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/** Idle hook: check the files of the viewers every second. */
+
+static void
+mcview_follow_hook (void *data)
+{
+    static gint64 checked = 0;
+    const gint64 now = g_get_monotonic_time ();
+    GList *v;
+
+    (void) data;
+
+    if (now - checked < G_USEC_PER_SEC)
+        return;
+    checked = now;
+
+    for (v = mcview_follow_views; v != NULL; v = g_list_next (v))
+        mcview_follow_file ((WView *) v->data);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+mcview_follow (WView *view, gboolean follow)
+{
+    if (follow)
+    {
+        if (mcview_follow_views == NULL)
+        {
+            add_hook (&idle_hook, mcview_follow_hook, NULL);
+            tty_tick_use (TRUE);
+        }
+        mcview_follow_views = g_list_prepend (mcview_follow_views, view);
+    }
+    else if (g_list_find (mcview_follow_views, view) != NULL)
+    {
+        mcview_follow_views = g_list_remove (mcview_follow_views, view);
+        if (mcview_follow_views == NULL)
+        {
+            delete_hook (&idle_hook, mcview_follow_hook);
+            tty_tick_use (FALSE);
+        }
+    }
+}
+
 /* --------------------------------------------------------------------------------------------- */
 
 static void
@@ -350,6 +444,7 @@ mcview_close_datasource (WView *view)
         mcview_growbuf_free (view);
         break;
     case DS_FILE:
+        mcview_follow (view, FALSE);
         (void) mc_close (view->ds_file_fd);
         view->ds_file_fd = -1;
         MC_PTR_FREE (view->ds_file_data);
@@ -375,6 +470,7 @@ mcview_set_datasource_file (WView *view, int fd, const struct stat *st)
     view->ds_file_data = g_malloc (4096);
     view->ds_file_datalen = 0;
     view->ds_file_datasize = 4096;
+    mcview_follow (view, TRUE);
 }
 
 /* --------------------------------------------------------------------------------------------- */
