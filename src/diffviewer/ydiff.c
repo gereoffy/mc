@@ -610,41 +610,6 @@ dview_get_utf (const char *str, const size_t pos, int *len)
 
 /* --------------------------------------------------------------------------------------------- */
 
-static size_t
-dview_str_utf8_offset_to_pos (const char *text, size_t length)
-{
-    ptrdiff_t result;
-
-    if (text == NULL || text[0] == '\0')
-        return length;
-
-    if (g_utf8_validate (text, -1, NULL))
-        result = g_utf8_offset_to_pointer (text, length) - text;
-    else
-    {
-        gunichar uni;
-        char *tmpbuf, *buffer;
-
-        buffer = tmpbuf = g_strdup (text);
-        while (tmpbuf[0] != '\0')
-        {
-            uni = g_utf8_get_char_validated (tmpbuf, -1);
-            if ((uni != (gunichar) (-1)) && (uni != (gunichar) (-2)))
-                tmpbuf = g_utf8_next_char (tmpbuf);
-            else
-            {
-                tmpbuf[0] = '.';
-                tmpbuf++;
-            }
-        }
-        result = g_utf8_offset_to_pointer (tmpbuf, length) - tmpbuf;
-        g_free (buffer);
-    }
-    return MAX (length, (size_t) result);
-}
-
-/* --------------------------------------------------------------------------------------------- */
-
 /* diff parse *************************************************************** */
 
 /**
@@ -2471,6 +2436,71 @@ dview_fini (WDiff *dview)
 
 /* --------------------------------------------------------------------------------------------- */
 
+/**
+ * Print a line made by cvt_mget(), cvt_mgeta() or cvt_fget() and fill the rest of it with spaces,
+ * counting screen columns: a UTF-8 character takes one column (two if wide), not one per byte.
+ *
+ * @param dview diff viewer
+ * @param buf line to print
+ * @param att attributes of the bytes of @buf (inside a change or not), or NULL
+ * @param width width of the line in columns
+ */
+
+static void
+dview_print_line (const WDiff *dview, const char *buf, const char *att, int width)
+{
+    const size_t len = strlen (buf);
+    int col = 0;
+
+    for (size_t cnt = 0; cnt < len && col < width; cnt++)
+    {
+        int next_ch;
+        int ch_width = 1;
+
+        if (att != NULL)
+            tty_setcolor (att[cnt] ? DIFFVIEWER_CHANGEDNEW_COLOR : DIFFVIEWER_CHANGEDLINE_COLOR);
+
+        if (dview->utf8)
+        {
+            int ch_length = 0;
+
+            next_ch = dview_get_utf (buf, cnt, &ch_length);
+            if (ch_length > 1)
+                cnt += ch_length - 1;
+            if (!g_unichar_isprint (next_ch))
+                next_ch = '.';
+        }
+        else
+            next_ch = dview_get_byte (buf, cnt);
+
+        if (mc_global.utf8_display)
+        {
+            if (!dview->utf8)
+                next_ch = convert_from_8bit_to_utf_c ((unsigned char) next_ch, dview->converter);
+            if (g_unichar_iszerowidth (next_ch))
+                ch_width = 0;
+            else if (g_unichar_iswide (next_ch))
+                ch_width = 2;
+        }
+        else if (dview->utf8)
+            next_ch = convert_from_utf_to_current_c (next_ch, dview->converter);
+        else
+            next_ch = convert_to_display_c (next_ch);
+
+        // a wide character doesn't fit into the last column
+        if (col + ch_width > width)
+            break;
+
+        tty_print_anychar (next_ch);
+        col += ch_width;
+    }
+
+    for (; col < width; col++)
+        tty_print_char (' ');
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
 static int
 dview_display_file (const WDiff *dview, diff_place_t ord, int r, int c, int height, int width)
 {
@@ -2519,10 +2549,13 @@ dview_display_file (const WDiff *dview, diff_place_t ord, int r, int c, int heig
         return -1;
     }
 
+    // bytes to take from a line: in UTF-8 a character of one column takes up to 4 bytes,
+    // dview_print_line() stops at the width of the panel
+    k = dview->utf8 ? MIN ((size_t) width * 4, sizeof (buf) - 1) : (size_t) width;
+
     for (i = dview->skip_rows, j = 0; i < dview->a[ord]->len && j < height; j++, i++)
     {
         int ch;
-        int next_ch = 0;
 
         p = (DIFFLN *) &g_array_index (dview->a[ord], DIFFLN, i);
         ch = p->ch;
@@ -2552,55 +2585,16 @@ dview_display_file (const WDiff *dview, diff_place_t ord, int r, int c, int heig
                 {
                     char att[BUFSIZ];
 
-                    if (dview->utf8)
-                        k = dview_str_utf8_offset_to_pos (p->p, width);
-                    else
-                        k = width;
-
                     cvt_mgeta (p->p, p->u.len, buf, k, skip, tab_size, show_cr,
                                g_ptr_array_index (dview->hdiff, i), ord, att);
                     tty_gotoyx (r + j, c);
-
-                    for (size_t cnt = 0; cnt < strlen (buf) && cnt < (size_t) width; cnt++)
-                    {
-                        if (dview->utf8)
-                        {
-                            int ch_length = 0;
-
-                            next_ch = dview_get_utf (buf, cnt, &ch_length);
-                            if (ch_length > 1)
-                                cnt += ch_length - 1;
-                            if (!g_unichar_isprint (next_ch))
-                                next_ch = '.';
-                        }
-                        else
-                            next_ch = dview_get_byte (buf, cnt);
-
-                        tty_setcolor (att[cnt] ? DIFFVIEWER_CHANGEDNEW_COLOR
-                                               : DIFFVIEWER_CHANGEDLINE_COLOR);
-                        if (mc_global.utf8_display)
-                        {
-                            if (!dview->utf8)
-                                next_ch = convert_from_8bit_to_utf_c ((unsigned char) next_ch,
-                                                                      dview->converter);
-                        }
-                        else if (dview->utf8)
-                            next_ch = convert_from_utf_to_current_c (next_ch, dview->converter);
-                        else
-                            next_ch = convert_to_display_c (next_ch);
-
-                        tty_print_anychar (next_ch);
-                    }
+                    dview_print_line (dview, buf, att, width);
                     continue;
                 }
 
                 if (ch == CHG_CH)
                     tty_setcolor (DIFFVIEWER_CHANGEDNEW_COLOR);
 
-                if (dview->utf8)
-                    k = dview_str_utf8_offset_to_pos (p->p, width);
-                else
-                    k = width;
                 cvt_mget (p->p, p->u.len, buf, k, skip, tab_size, show_cr);
             }
             else
@@ -2621,36 +2615,7 @@ dview_display_file (const WDiff *dview, diff_place_t ord, int r, int c, int heig
             fill_by_space (buf, width, TRUE);
         }
         tty_gotoyx (r + j, c);
-        // tty_print_nstring (buf, width);
-
-        for (size_t cnt = 0; cnt < strlen (buf) && cnt < (size_t) width; cnt++)
-        {
-            if (dview->utf8)
-            {
-                int ch_length = 0;
-
-                next_ch = dview_get_utf (buf, cnt, &ch_length);
-                if (ch_length > 1)
-                    cnt += ch_length - 1;
-                if (!g_unichar_isprint (next_ch))
-                    next_ch = '.';
-            }
-            else
-                next_ch = dview_get_byte (buf, cnt);
-
-            if (mc_global.utf8_display)
-            {
-                if (!dview->utf8)
-                    next_ch =
-                        convert_from_8bit_to_utf_c ((unsigned char) next_ch, dview->converter);
-            }
-            else if (dview->utf8)
-                next_ch = convert_from_utf_to_current_c (next_ch, dview->converter);
-            else
-                next_ch = convert_to_display_c (next_ch);
-
-            tty_print_anychar (next_ch);
-        }
+        dview_print_line (dview, buf, NULL, width);
     }
 
     tty_setcolor (CORE_NORMAL_COLOR);
