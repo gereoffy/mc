@@ -121,6 +121,9 @@ int shell_directory_timeout = 900;
 #define SHELL_SUPER(super)     ((shell_super_t *) (super))
 #define SHELL_FILE_HANDLER(fh) ((shell_file_handler_t *) fh)
 
+// the size of the pieces of a written file sent at once (by the send or append script)
+#define SHELL_STREAM_SIZE (16 * 1024 * 1024)
+
 /*** file scope type declarations ****************************************************************/
 
 typedef struct
@@ -155,11 +158,20 @@ typedef struct
     off_t got;
     off_t total;
     gboolean append;
+
+    // written only: the data is sent in pieces of SHELL_STREAM_SIZE bytes, without a local copy
+    gboolean stream;
+    char *stream_buf;    // the data not sent yet
+    size_t stream_len;
+    off_t stream_sent;   // the number of the bytes sent
+    gboolean stream_error;
 } shell_file_handler_t;
 
 /*** forward declarations (file scope functions) *************************************************/
 
 /*** file scope variables ************************************************************************/
+
+static ssize_t (*shell_write_tmp) (void *fh, const char *buffer, size_t count) = NULL;
 
 static char reply_str[80];
 
@@ -1071,6 +1083,140 @@ error_return:
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Send a piece of a file being written: the first one by the send script (or the append one if
+ * the file is appended to), the next ones by the append script.
+ */
+
+static int
+shell_stream_send (struct vfs_class *me, vfs_file_handler_t *fh, const char *data, size_t len)
+{
+    shell_file_handler_t *shell = SHELL_FILE_HANDLER (fh);
+    struct vfs_s_super *super = VFS_FILE_HANDLER_SUPER (fh);
+    shell_super_t *shell_super = SHELL_SUPER (super);
+    char *name, *quoted_name;
+    size_t done = 0;
+    int code;
+
+    name = vfs_s_fullpath (me, fh->ino);
+    if (name == NULL)
+        ERRNOR (EIO, -1);
+    quoted_name = str_shell_escape (name);
+    g_free (name);
+
+    vfs_print_message (_ ("shell: store %s: sending command..."), quoted_name);
+    code = shell_command_v (me, super, WAIT_REPLY,
+                            shell->append || shell->stream_sent > 0 ? shell_super->scr_append
+                                                                    : shell_super->scr_send,
+                            "SHELL_FILENAME=%s SHELL_FILESIZE=%" PRIuMAX ";\n", quoted_name,
+                            (uintmax_t) len);
+    g_free (quoted_name);
+
+    if (code != PRELIM)
+        ERRNOR (E_REMOTE, -1);
+
+    while (done < len)
+    {
+        const ssize_t t = write (shell_super->sockw, data + done, len - done);
+
+        if (t <= 0)
+        {
+            if (t == -1 && errno == EINTR)
+                continue;
+            me->verrno = t == -1 ? errno : EIO;
+            shell_get_reply (me, shell_super->sockr, NULL, 0);
+            return -1;
+        }
+        done += (size_t) t;
+        vfs_print_message ("%s: %" PRIuMAX, _ ("shell: storing file"),
+                           (uintmax_t) (shell->stream_sent + (off_t) done));
+    }
+
+    if (shell_get_reply (me, shell_super->sockr, NULL, 0) != COMPLETE)
+        ERRNOR (E_REMOTE, -1);
+
+    shell->stream_sent += (off_t) len;
+    return 0;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static ssize_t
+shell_write (void *fh, const char *buffer, size_t count)
+{
+    shell_file_handler_t *shell = SHELL_FILE_HANDLER (fh);
+    struct vfs_class *me = VFS_FILE_HANDLER_SUPER (fh)->me;
+    size_t done = 0;
+
+    if (!shell->stream)
+        return shell_write_tmp (fh, buffer, count);
+
+    if (shell->stream_error)
+        ERRNOR (EIO, -1);
+
+    if (shell->stream_buf == NULL)
+        shell->stream_buf = g_malloc (SHELL_STREAM_SIZE);
+
+    while (done < count)
+    {
+        const size_t n = MIN (count - done, SHELL_STREAM_SIZE - shell->stream_len);
+
+        memcpy (shell->stream_buf + shell->stream_len, buffer + done, n);
+        shell->stream_len += n;
+        done += n;
+
+        if (shell->stream_len == SHELL_STREAM_SIZE)
+        {
+            if (shell_stream_send (me, VFS_FILE_HANDLER (fh), shell->stream_buf,
+                                   shell->stream_len)
+                != 0)
+            {
+                shell->stream_error = TRUE;
+                return -1;
+            }
+            shell->stream_len = 0;
+        }
+    }
+
+    return (ssize_t) count;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/** Send the rest of a written file (also an empty one, to create it). */
+
+static int
+shell_fh_close (struct vfs_class *me, vfs_file_handler_t *fh)
+{
+    shell_file_handler_t *shell = SHELL_FILE_HANDLER (fh);
+    int res = 0;
+
+    if (!shell->stream)
+        return 0;
+
+    if (shell->stream_error)
+        res = -1;
+    else if ((shell->stream_len > 0 || shell->stream_sent == 0)
+             && shell_stream_send (me, fh, shell->stream_buf, shell->stream_len) != 0)
+        res = -1;
+
+    MC_PTR_FREE (shell->stream_buf);
+    shell->stream_len = 0;
+
+    fh->changed = FALSE;  // sent already: no store from a temporary file
+    vfs_s_invalidate (me, VFS_FILE_HANDLER_SUPER (fh));
+
+    return res;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+shell_fh_free (vfs_file_handler_t *fh)
+{
+    g_free (SHELL_FILE_HANDLER (fh)->stream_buf);
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 static int
 shell_linear_start (struct vfs_class *me, vfs_file_handler_t *fh, off_t offset)
@@ -1620,18 +1766,8 @@ shell_fh_open (struct vfs_class *me, vfs_file_handler_t *fh, int flags, mode_t m
         if ((flags & O_APPEND) != 0)
             shell->append = TRUE;
 
-        if (fh->ino->localname == NULL)
-        {
-            vfs_path_t *vpath = NULL;
-            int tmp_handle;
-
-            tmp_handle = vfs_mkstemps (&vpath, me->name, fh->ino->ent->name);
-            if (tmp_handle == -1)
-                return (-1);
-
-            fh->ino->localname = vfs_path_free (vpath, FALSE);
-            close (tmp_handle);
-        }
+        // send the data while it is written, no local copy
+        shell->stream = TRUE;
         return 0;
     }
 
@@ -1743,12 +1879,16 @@ vfs_init_shell (void)
     vfs_shell_ops->mkdir = shell_mkdir;
     vfs_shell_ops->rmdir = shell_rmdir;
     vfs_shell_ops->ctl = shell_ctl;
+    shell_write_tmp = vfs_shell_ops->write;
+    vfs_shell_ops->write = shell_write;
     shell_subclass.archive_same = shell_archive_same;
     shell_subclass.new_archive = shell_new_archive;
     shell_subclass.open_archive = shell_open_archive;
     shell_subclass.free_archive = shell_free_archive;
     shell_subclass.fh_new = shell_fh_new;
     shell_subclass.fh_open = shell_fh_open;
+    shell_subclass.fh_close = shell_fh_close;
+    shell_subclass.fh_free = shell_fh_free;
     shell_subclass.dir_load = shell_dir_load;
     shell_subclass.file_store = shell_file_store;
     shell_subclass.linear_start = shell_linear_start;
