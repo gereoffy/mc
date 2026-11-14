@@ -3330,17 +3330,22 @@ by the libarchive library: zip (and jar, apk, ...), 7z, rar, cab, lha,
 iso9660 and others, also when they are compressed or inside another
 archive. It is available if Midnight Commander was compiled with
 libarchive; then the mc.ext.ini file uses it for these archives instead
-of the extfs helpers, so no external programs are needed. The syntax is:
+of the extfs helpers, so no external programs are needed. It is used for
+the compressed tar archives (tar.gz, tar.bz2, tar.xz, ...) too: they are
+decompressed while reading, not to a temporary file like by the tar file
+system. The syntax is:
 .PP
 .I /filename.zip/uarchive://[dir\-inside\-archive]
 .PP
 The files are read directly from the archive. For an encrypted file of a
 zip archive mc asks the password, and tries it first for the next
 encrypted files of the archive. libarchive cannot decrypt the encrypted
-files of the 7z and rar archives. As libarchive reads an archive sequentially, reading a file before
-the one read last starts reading the archive from its start again (for
-a zip archive, only its central directory), which can be slow in a big
-solid 7z or rar archive.
+files of the rar archives, and of the 7z archives only in its newer
+versions.
+As libarchive reads an archive sequentially, reading a file before the
+one read last starts reading the archive from its start again (for a zip
+archive, only its central directory), which can be slow in a big
+compressed tar or solid 7z or rar archive.
 .\"NODE "  FIle transfer over SHell filesystem"
 .SH "  FIle transfer over SHell filesystem"
 The shell file system is a network based file system that allows you to
