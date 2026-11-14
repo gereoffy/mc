@@ -170,6 +170,7 @@ static name_keymap_t command_names[] = {
     ADD_KEYMAP_NAME (LinkSymbolicEdit),
     ADD_KEYMAP_NAME (ExternalPanelize),
     ADD_KEYMAP_NAME (Filter),
+    ADD_KEYMAP_NAME (FilterOff),
 #ifdef ENABLE_VFS_SHELL
     ADD_KEYMAP_NAME (ConnectShell),
 #endif

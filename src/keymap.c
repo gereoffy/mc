@@ -533,6 +533,7 @@ static const global_keymap_ini_t default_viewer_keymap[] = {
     { "HexMode", "f4" },
     { "Goto", "f5" },
     { "Filter", "f6" },
+    { "FilterOff", "f16" },
     { "Search", "f7" },
     { "SearchContinue", "f17; n" },
     { "MagicMode", "f8" },
