@@ -442,6 +442,60 @@ mc_setctl (const vfs_path_t *vpath, int ctlop, void *arg)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Whether the VFS of @vpath reads several files faster in an order of its own (see mc_batch()).
+ */
+
+gboolean
+mc_batch_supported (const vfs_path_t *vpath)
+{
+    const struct vfs_class *me;
+
+    me = VFS_CLASS (vfs_path_get_last_path_vfs (vpath));
+
+    return me != NULL && me->batch != NULL;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Read several files: call @cb for each of @vpaths, in the order their VFS reads them fastest.
+ * An archive read in one pass from its start reads its files in the order they are stored, so that
+ * none of them has to be looked for from the start again.
+ *
+ * @param vpaths files to read
+ * @param count number of files
+ * @param cb callback, called with the index of a file in @vpaths
+ * @param user_data data passed to @cb
+ *
+ * @return FALSE if @cb stopped the batch, TRUE otherwise
+ */
+
+gboolean
+mc_batch (const vfs_path_t *const *vpaths, guint count, vfs_batch_cb_t cb, void *user_data)
+{
+    struct vfs_class *me;
+    guint i;
+
+    if (count == 0)
+        return TRUE;
+
+    // one VFS for all files, otherwise just one after the other
+    me = VFS_CLASS (vfs_path_get_last_path_vfs (vpaths[0]));
+    for (i = 1; me != NULL && i < count; i++)
+        if (VFS_CLASS (vfs_path_get_last_path_vfs (vpaths[i])) != me)
+            me = NULL;
+
+    if (me != NULL && me->batch != NULL)
+        return me->batch (vpaths, count, cb, user_data);
+
+    for (i = 0; i < count; i++)
+        if (!cb (i, user_data))
+            return FALSE;
+
+    return TRUE;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 int
 mc_close (int handle)

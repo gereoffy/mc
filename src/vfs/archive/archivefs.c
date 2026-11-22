@@ -90,15 +90,23 @@ typedef struct
     off_t head_entry;  // the index of the entry whose start is in head, -1 if none
     char *head;        // the first head_len bytes of its data
     size_t head_len;
-    char *buf;          // ARCHIVE_BUF_SIZE bytes for reading the file (the input of libarchive)
-    char *skip_buf;     // ARCHIVE_BUF_SIZE bytes for the data skipped in a file
+    char *buf;       // ARCHIVE_BUF_SIZE bytes for reading the file (the input of libarchive)
+    char *skip_buf;  // ARCHIVE_BUF_SIZE bytes for the data skipped in a file
 
     // passwords of encrypted files given by the user, tried first for the next files
     GPtrArray *passwords;
-    const char *entry_name;  // the name of the file being read, for the password dialog
-    gboolean password_asked; // a password has been asked for this file
+    const char *entry_name;       // the name of the file being read, for the password dialog
+    gboolean password_asked;      // a password has been asked for this file
     gboolean password_cancelled;  // the password dialog has been cancelled: no error message
 } archive_super_t;
+
+// a file of a batch (see arcfs_batch())
+typedef struct
+{
+    guint index;
+    const struct vfs_s_super *super;
+    off_t offset;
+} arcfs_batch_item_t;
 
 /*** forward declarations (file scope functions) *************************************************/
 
@@ -808,6 +816,69 @@ arcfs_fh_open (struct vfs_class *me, vfs_file_handler_t *fh, int flags, mode_t m
 }
 
 /* --------------------------------------------------------------------------------------------- */
+
+static int
+arcfs_batch_compare (const void *a, const void *b)
+{
+    const arcfs_batch_item_t *x = (const arcfs_batch_item_t *) a;
+    const arcfs_batch_item_t *y = (const arcfs_batch_item_t *) b;
+
+    if (x->super != y->super)
+        return (uintptr_t) x->super < (uintptr_t) y->super ? -1 : 1;
+    if (x->offset != y->offset)
+        return x->offset < y->offset ? -1 : 1;
+    return x->index < y->index ? -1 : (x->index > y->index ? 1 : 0);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Read several files in the order they are stored in their archive: the reader goes on from one
+ * to the next and never has to start again from the beginning of the archive.
+ */
+
+static gboolean
+arcfs_batch (const vfs_path_t *const *vpaths, guint count, vfs_batch_cb_t cb, void *user_data)
+{
+    arcfs_batch_item_t *items;
+    gboolean ok = TRUE;
+    guint i;
+
+    items = g_new (arcfs_batch_item_t, count);
+
+    for (i = 0; i < count; i++)
+    {
+        struct vfs_s_super *super = NULL;
+        const char *path;
+
+        items[i].index = i;
+        items[i].super = NULL;
+        items[i].offset = -1;
+
+        path = vfs_s_get_path (vpaths[i], &super, 0);
+        if (path != NULL)
+        {
+            const struct vfs_s_inode *ino;
+
+            ino = vfs_s_find_inode (vfs_archive_ops, super, path, LINK_NO_FOLLOW, FL_NONE);
+            if (ino != NULL && S_ISREG (ino->st.st_mode))
+            {
+                items[i].super = super;
+                items[i].offset = ino->data_offset;
+            }
+        }
+    }
+
+    qsort (items, count, sizeof (items[0]), arcfs_batch_compare);
+
+    for (i = 0; ok && i < count; i++)
+        ok = cb (items[i].index, user_data);
+
+    g_free (items);
+
+    return ok;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /*** public functions ****************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
 
@@ -817,6 +888,7 @@ vfs_init_archivefs (void)
     vfs_init_subclass (&archive_subclass, "archivefs", VFSF_READONLY, "uarchive");
     vfs_archive_ops->setctl = NULL;
     vfs_archive_ops->read = arcfs_read;
+    vfs_archive_ops->batch = arcfs_batch;
     archive_subclass.archive_check = arcfs_super_check;
     archive_subclass.archive_same = arcfs_super_same;
     archive_subclass.new_archive = arcfs_new_archive;

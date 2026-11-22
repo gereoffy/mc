@@ -150,6 +150,15 @@ typedef struct
     // Time of pauses in query dialogs
     gint64 pauses;
 
+    /* Copy from a VFS that reads several files faster in an order of its own (see mc_batch()):
+       the files are copied after the directories have been walked, and the attributes of the
+       directories that hold them are set after that */
+    gboolean batch;
+    GPtrArray *batch_files;
+    GPtrArray *batch_dirs;
+    // index of the marked panel entry being copied, until its copy is put to the batch
+    int batch_mark;
+
     // User interface data goes here
     void *ui;
 } file_op_context_t;

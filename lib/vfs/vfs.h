@@ -135,6 +135,10 @@ enum
 
 /*** structures declarations (and typedefs of structures)*****************************************/
 
+/* Called by mc_batch() for a file of the batch: @index is its index in the list given to
+   mc_batch(). Returns FALSE to stop the batch. */
+typedef gboolean (*vfs_batch_cb_t) (guint index, void *user_data);
+
 typedef struct vfs_class
 {
     const char *name;  // "FIles over SHell"
@@ -204,6 +208,11 @@ typedef struct vfs_class
 
     int (*ctl) (void *vfs_info, int ctlop, void *arg);
     int (*setctl) (const vfs_path_t *vpath, int ctlop, void *arg);
+
+    /* Read several files: call the callback for each, in the order the class reads them fastest
+       (an archive read in one pass from its start). NULL: in the order they are given. */
+    gboolean (*batch) (const vfs_path_t *const *vpaths, guint count, vfs_batch_cb_t cb,
+                       void *user_data);
 } vfs_class;
 
 /*
@@ -335,6 +344,9 @@ int mc_chdir (const vfs_path_t *vpath);
 int mc_unlink (const vfs_path_t *vpath);
 int mc_ctl (int fd, int ctlop, void *arg);
 int mc_setctl (const vfs_path_t *vpath, int ctlop, void *arg);
+gboolean mc_batch_supported (const vfs_path_t *vpath);
+gboolean mc_batch (const vfs_path_t *const *vpaths, guint count, vfs_batch_cb_t cb,
+                   void *user_data);
 int mc_open (const vfs_path_t *vpath, int flags, ...);
 MC_MOCKABLE vfs_path_t *mc_getlocalcopy (const vfs_path_t *pathname_vpath);
 MC_MOCKABLE int mc_ungetlocalcopy (const vfs_path_t *pathname_vpath, const vfs_path_t *local_vpath,

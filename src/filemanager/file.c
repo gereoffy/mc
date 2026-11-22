@@ -188,6 +188,32 @@ static GQueue *erase_list = NULL;
  */
 static GSList *dest_dirs = NULL;
 
+/*** file scope type declarations (batch) ********************************************************/
+
+// a file to copy in a batch (see batch_copy())
+typedef struct
+{
+    char *src;
+    char *dst;
+    int mark;  // index of a marked panel entry to unmark when copied, or -1
+} batch_file_t;
+
+// a directory whose attributes are set after the files of the batch have been copied
+typedef struct
+{
+    vfs_path_t *dst_vpath;
+    struct stat src_stat;
+    gboolean attrs_ok;
+    unsigned long attrs;
+} batch_dir_t;
+
+typedef struct
+{
+    file_op_context_t *ctx;
+    WPanel *panel;
+    FileProgressStatus status;
+} batch_run_t;
+
 /* --------------------------------------------------------------------------------------------- */
 /*** file scope functions ************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
@@ -1175,6 +1201,122 @@ calc_copy_file_progress (file_op_context_t *ctx, gint64 tv_current, off_t file_p
         dt = MAX (1.0, dt);
         ctx->total_bps = (long) (copied_bytes / dt);
     }
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+batch_file_free (void *data)
+{
+    batch_file_t *f = (batch_file_t *) data;
+
+    g_free (f->src);
+    g_free (f->dst);
+    g_free (f);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+batch_dir_free (void *data)
+{
+    batch_dir_t *d = (batch_dir_t *) data;
+
+    vfs_path_free (d->dst_vpath, TRUE);
+    g_free (d);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Put the copy of a file to the batch, to be done by batch_copy().
+ *
+ * @param mark index of the marked panel entry to unmark when the file has been copied, or -1
+ */
+
+static void
+batch_add_file (file_op_context_t *ctx, const char *src, const char *dst, int mark)
+{
+    batch_file_t *f;
+
+    if (ctx->batch_files == NULL)
+        ctx->batch_files = g_ptr_array_new_with_free_func (batch_file_free);
+
+    f = g_new (batch_file_t, 1);
+    f->src = g_strdup (src);
+    f->dst = g_strdup (dst);
+    f->mark = mark;
+    g_ptr_array_add (ctx->batch_files, f);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static void
+batch_free (file_op_context_t *ctx)
+{
+    if (ctx->batch_files != NULL)
+    {
+        g_ptr_array_free (ctx->batch_files, TRUE);
+        ctx->batch_files = NULL;
+    }
+    if (ctx->batch_dirs != NULL)
+    {
+        g_ptr_array_free (ctx->batch_dirs, TRUE);
+        ctx->batch_dirs = NULL;
+    }
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Set the mode, ext2 attributes and times of a copied directory.
+ */
+
+static void
+copy_dir_set_attrs (const file_op_context_t *ctx, const vfs_path_t *dst_vpath,
+                    const struct stat *src_stat, gboolean attrs_ok, unsigned long attrs)
+{
+    if (ctx->preserve)
+    {
+        mc_timesbuf_t times;
+
+        mc_chmod (dst_vpath, src_stat->st_mode & ctx->umask_kill);
+
+        if (attrs_ok)
+            mc_fsetflags (dst_vpath, attrs);
+
+        vfs_get_timesbuf_from_stat (src_stat, &times);
+        mc_utime (dst_vpath, &times);
+    }
+    else
+    {
+        mode_t mode;
+
+        mode = umask (-1);
+        umask (mode);
+        mode = 0100777 & ~mode;
+        mc_chmod (dst_vpath, mode & ctx->umask_kill);
+    }
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Set the attributes of a copied directory after the files of the batch have been copied into it.
+ */
+
+static void
+batch_add_dir (file_op_context_t *ctx, const vfs_path_t *dst_vpath, const struct stat *src_stat,
+               gboolean attrs_ok, unsigned long attrs)
+{
+    batch_dir_t *d;
+
+    if (ctx->batch_dirs == NULL)
+        ctx->batch_dirs = g_ptr_array_new_with_free_func (batch_dir_free);
+
+    d = g_new (batch_dir_t, 1);
+    d->dst_vpath = vfs_path_clone (dst_vpath);
+    d->src_stat = *src_stat;
+    d->attrs_ok = attrs_ok;
+    d->attrs = attrs;
+    g_ptr_array_add (ctx->batch_dirs, d);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -2177,7 +2319,12 @@ operate_one_file (const WPanel *panel, file_op_context_t *ctx, const char *src,
                 ctx->stat_func (src_vpath, src_stat);
                 is_file = !S_ISDIR (src_stat->st_mode);
 
-                if (is_file)
+                if (is_file && ctx->batch && ctx->batch_mark >= 0)
+                {
+                    batch_add_file (ctx, src, dest, ctx->batch_mark);
+                    ctx->batch_mark = -1;
+                }
+                else if (is_file)
                     value = copy_file_file (ctx, src, dest);
                 else
                     value = copy_dir_dir (ctx, src, dest, TRUE, FALSE, FALSE, NULL);
@@ -3075,6 +3222,7 @@ copy_dir_dir (file_op_context_t *ctx, const char *s, const char *d, gboolean top
     link_t *lp;
     vfs_path_t *src_vpath, *dst_vpath;
     gboolean do_mkdir = TRUE;
+    gboolean batched = FALSE;
 
     src_vpath = vfs_path_from_str (s);
     dst_vpath = vfs_path_from_str (d);
@@ -3313,7 +3461,13 @@ retry_dst_stat:
             char *dest_file;
 
             dest_file = mc_build_filename (d, x_basename (path), (char *) NULL);
-            return_status = copy_file_file (ctx, path, dest_file);
+            if (ctx->batch && !do_delete)
+            {
+                batch_add_file (ctx, path, dest_file, -1);
+                batched = TRUE;
+            }
+            else
+                return_status = copy_file_file (ctx, path, dest_file);
             g_free (dest_file);
         }
 
@@ -3341,25 +3495,11 @@ retry_dst_stat:
     }
     mc_closedir (reading);
 
-    if (ctx->preserve)
-    {
-        mc_timesbuf_t times;
-
-        mc_chmod (dst_vpath, src_stat.st_mode & ctx->umask_kill);
-
-        if (attrs_ok)
-            mc_fsetflags (dst_vpath, attrs);
-
-        vfs_get_timesbuf_from_stat (&src_stat, &times);
-        mc_utime (dst_vpath, &times);
-    }
+    // the files put to the batch are written later: the attributes of the directory after them
+    if (batched)
+        batch_add_dir (ctx, dst_vpath, &src_stat, attrs_ok, attrs);
     else
-    {
-        src_stat.st_mode = umask (-1);
-        umask (src_stat.st_mode);
-        src_stat.st_mode = 0100777 & ~src_stat.st_mode;
-        mc_chmod (dst_vpath, src_stat.st_mode & ctx->umask_kill);
-    }
+        copy_dir_set_attrs (ctx, dst_vpath, &src_stat, attrs_ok, attrs);
 
 ret:
     free_link (parent_dirs->data);
@@ -3525,6 +3665,76 @@ compute_dir_size (const vfs_path_t *dirname_vpath, dirsize_status_msg_t *sm, siz
 }
 
 /* --------------------------------------------------------------------------------------------- */
+
+static gboolean
+batch_copy_cb (guint index, void *user_data)
+{
+    batch_run_t *run = (batch_run_t *) user_data;
+    const batch_file_t *f = (const batch_file_t *) g_ptr_array_index (run->ctx->batch_files, index);
+    FileProgressStatus value;
+
+    value = copy_file_file (run->ctx, f->src, f->dst);
+    if (value == FILE_ABORT)
+    {
+        run->status = FILE_ABORT;
+        return FALSE;
+    }
+
+    if (value == FILE_CONT && f->mark >= 0)
+        do_file_mark (run->panel, f->mark, 0);
+
+    return TRUE;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Copy the files put to the batch while the directories were walked, in the order their VFS reads
+ * them fastest, then set the attributes of the directories that hold them.
+ *
+ * @param status status of the operation so far: the files are not copied if it has been aborted
+ *
+ * @return status of the operation
+ */
+
+static FileProgressStatus
+batch_copy (file_op_context_t *ctx, WPanel *panel, FileProgressStatus status)
+{
+    if (ctx->batch_files != NULL && status != FILE_ABORT)
+    {
+        GPtrArray *files = ctx->batch_files;
+        vfs_path_t **vpaths;
+        batch_run_t run = { ctx, panel, FILE_CONT };
+        guint i;
+
+        vpaths = g_new (vfs_path_t *, files->len);
+        for (i = 0; i < files->len; i++)
+            vpaths[i] =
+                vfs_path_from_str (((const batch_file_t *) g_ptr_array_index (files, i))->src);
+
+        mc_batch ((const vfs_path_t *const *) vpaths, files->len, batch_copy_cb, &run);
+
+        for (i = 0; i < files->len; i++)
+            vfs_path_free (vpaths[i], TRUE);
+        g_free (vpaths);
+
+        if (run.status == FILE_ABORT)
+            status = FILE_ABORT;
+    }
+
+    if (ctx->batch_dirs != NULL)
+        for (guint i = 0; i < ctx->batch_dirs->len; i++)
+        {
+            const batch_dir_t *d = (const batch_dir_t *) g_ptr_array_index (ctx->batch_dirs, i);
+
+            copy_dir_set_attrs (ctx, d->dst_vpath, &d->src_stat, d->attrs_ok, d->attrs);
+        }
+
+    batch_free (ctx);
+
+    return status;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /**
  * panel_operate:
  *
@@ -3592,6 +3802,10 @@ panel_operate (void *source_panel, FileOperation operation, gboolean force_singl
     }
 
     ctx->total_transfer_start = g_get_monotonic_time ();
+
+    // an archive reads its files fastest in the order they are stored
+    ctx->batch = operation == OP_COPY && mc_batch_supported (panel->cwd_vpath);
+    ctx->batch_mark = -1;
 
 #ifdef ENABLE_BACKGROUND
     // Did the user select to do a background operation?
@@ -3669,6 +3883,7 @@ panel_operate (void *source_panel, FileOperation operation, gboolean force_singl
         }
 
         value = operate_single_file (panel, ctx, source, &src_stat, dest, dialog_type);
+        value = batch_copy (ctx, panel, value);
         if ((value == FILE_CONT) && !force_single)
             unmark_files (panel);
     }
@@ -3712,15 +3927,20 @@ panel_operate (void *source_panel, FileOperation operation, gboolean force_singl
                 source2 = panel->dir.list[i].fname->str;
                 src_stat = panel->dir.list[i].st;
 
+                ctx->batch_mark = i;
                 value = operate_one_file (panel, ctx, source2, &src_stat, dest);
                 if (value == FILE_ABORT)
                     break;
 
-                if (value == FILE_CONT)
+                // a file put to the batch is unmarked when it has been copied
+                if (value == FILE_CONT && ctx->batch_mark == i)
                     do_file_mark (panel, i, 0);
+                ctx->batch_mark = -1;
 
                 mc_refresh ();
             }  // Loop for every file
+
+        value = batch_copy (ctx, panel, value);
     }  // Many entries
 
 clean_up:
@@ -3737,6 +3957,7 @@ clean_up:
         vfs_path_free (save_dest, TRUE);
     }
 
+    batch_free (ctx);
     linklist = free_linklist (linklist);
     dest_dirs = free_linklist (dest_dirs);
     g_free (dest);
