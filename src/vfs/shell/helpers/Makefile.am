@@ -4,7 +4,7 @@ shelldir = $(pkglibexecdir)/shell
 SHELL_MISC  = README.shell
 
 # Install and distribute SHELL helper scripts w/o shebang & executable bit as data
-shell_DATA = $(SHELL_MISC) ls mkdir fexists unlink chown chmod rmdir ln mv hardlink get send append info utime
+shell_DATA = $(SHELL_MISC) ls mkdir fexists unlink chown chmod rmdir ln mv hardlink get getmany send append info utime
 shellconfdir = $(sysconfdir)/@PACKAGE@
 
 EXTRA_DIST = $(shell_DATA)

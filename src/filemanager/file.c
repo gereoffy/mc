@@ -3803,8 +3803,10 @@ panel_operate (void *source_panel, FileOperation operation, gboolean force_singl
 
     ctx->total_transfer_start = g_get_monotonic_time ();
 
-    // an archive reads its files fastest in the order they are stored
-    ctx->batch = operation == OP_COPY && mc_batch_supported (panel->cwd_vpath);
+    /* an archive reads its files fastest in the order they are stored, a shell connection sends
+       many at once; not to the same file system: a copy within a host needs the connection */
+    ctx->batch = operation == OP_COPY && mc_batch_supported (panel->cwd_vpath)
+        && vfs_path_get_last_path_vfs (dest_vpath) != vfs_path_get_last_path_vfs (panel->cwd_vpath);
     ctx->batch_mark = -1;
 
 #ifdef ENABLE_BACKGROUND

@@ -126,6 +126,13 @@ int shell_directory_timeout = 900;
 // progress less often on a slow one)
 #define SHELL_STREAM_SIZE (4 * 1024 * 1024)
 
+/* the files of a batch read with one getmany command: at most this many, with names of at most
+   this length in all (the arguments of the perl run on the host), and at most this much data
+   unless a single file is bigger (all of it is read on, unwanted, when the copy is aborted) */
+#define SHELL_BATCH_FILES      1000
+#define SHELL_BATCH_NAMES_SIZE (64 * 1024)
+#define SHELL_BATCH_DATA_SIZE  (16 * 1024 * 1024)
+
 /*** file scope type declarations ****************************************************************/
 
 typedef struct
@@ -146,12 +153,18 @@ typedef struct
     char *scr_mv;
     char *scr_hardlink;
     char *scr_get;
+    char *scr_getmany;  // NULL if not installed: no batch read
     char *scr_send;
     char *scr_append;
     char *scr_info;
     int host_flags;
     GString *scr_env;
     int linear_files;  // the files opened for a linear read: they use the connection
+
+    // a batch read (see shell_batch()): the files sent by getmany are still to be read
+    int batch_left;
+    struct vfs_s_inode *batch_ino;  // the file whose turn it is in the stream
+    gboolean batch_started;         // its reply has been read by a linear read
 } shell_super_t;
 
 typedef struct
@@ -164,9 +177,9 @@ typedef struct
 
     // written only: the data is sent in pieces of SHELL_STREAM_SIZE bytes, without a local copy
     gboolean stream;
-    char *stream_buf;    // the data not sent yet
+    char *stream_buf;  // the data not sent yet
     size_t stream_len;
-    off_t stream_sent;   // the number of the bytes sent
+    off_t stream_sent;  // the number of the bytes sent
     gboolean stream_error;
 
     gboolean linear;  // counted in linear_files of the super
@@ -312,6 +325,13 @@ shell_command (struct vfs_class *me, struct vfs_s_super *super, int wait_reply, 
     ssize_t status;
     FILE *logfile = me->logfile;
 
+    // the replies to a batch read are on the way: no other command now
+    if (SHELL_SUPER (super)->batch_left > 0)
+    {
+        me->verrno = EBUSY;
+        return TRANSIENT;
+    }
+
     if (cmd_len == (size_t) (-1))
         cmd_len = strlen (cmd);
 
@@ -435,6 +455,7 @@ shell_free_archive (struct vfs_class *me, struct vfs_s_super *super)
 
     for (i = 0; i < G_N_ELEMENTS (scripts); i++)
         g_free (G_STRUCT_MEMBER (char *, shell_super, scripts[i].offset));
+    g_free (shell_super->scr_getmany);
 
     if (shell_super->scr_env != NULL)
         g_string_free (shell_super->scr_env, TRUE);
@@ -718,6 +739,10 @@ shell_open_archive (struct vfs_s_super *super, const vfs_path_t *vpath,
             return -1;
         }
     }
+
+    // optional: without it the files are read one by one
+    shell_super->scr_getmany =
+        shell_load_script_from_file (super->path_element->host, VFS_SHELL_GETMANY_FILE, NULL);
 
     return shell_open_archive_int (vpath_element->class, super);
 }
@@ -1110,11 +1135,10 @@ shell_stream_send (struct vfs_class *me, vfs_file_handler_t *fh, const char *dat
     g_free (name);
 
     vfs_print_message (_ ("shell: store %s: sending command..."), quoted_name);
-    code = shell_command_v (me, super, WAIT_REPLY,
-                            shell->append || shell->stream_sent > 0 ? shell_super->scr_append
-                                                                    : shell_super->scr_send,
-                            "SHELL_FILENAME=%s SHELL_FILESIZE=%" PRIuMAX ";\n", quoted_name,
-                            (uintmax_t) len);
+    code = shell_command_v (
+        me, super, WAIT_REPLY,
+        shell->append || shell->stream_sent > 0 ? shell_super->scr_append : shell_super->scr_send,
+        "SHELL_FILENAME=%s SHELL_FILESIZE=%" PRIuMAX ";\n", quoted_name, (uintmax_t) len);
     g_free (quoted_name);
 
     if (code != PRELIM)
@@ -1172,8 +1196,7 @@ shell_write (void *fh, const char *buffer, size_t count)
 
         if (shell->stream_len == SHELL_STREAM_SIZE)
         {
-            if (shell_stream_send (me, VFS_FILE_HANDLER (fh), shell->stream_buf,
-                                   shell->stream_len)
+            if (shell_stream_send (me, VFS_FILE_HANDLER (fh), shell->stream_buf, shell->stream_len)
                 != 0)
             {
                 shell->stream_error = TRUE;
@@ -1228,6 +1251,107 @@ shell_fh_free (vfs_file_handler_t *fh)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Read and throw away @len bytes of the data of the connection.
+ *
+ * @return FALSE on a read error
+ */
+
+static gboolean
+shell_discard (struct vfs_s_super *super, off_t len)
+{
+    char buffer[BUF_8K];
+
+    while (len > 0)
+    {
+        const ssize_t n =
+            read (SHELL_SUPER (super)->sockr, buffer, (size_t) MIN ((off_t) sizeof (buffer), len));
+
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            return FALSE;
+        len -= n;
+    }
+
+    return TRUE;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Read the start of the reply to getmany for the file whose turn it is: its size.
+ *
+ * @return the size, or -1 if the file cannot be read
+ */
+
+static off_t
+shell_batch_reply (struct vfs_class *me, struct vfs_s_super *super)
+{
+    off_t size;
+
+    SHELL_SUPER (super)->batch_started = TRUE;
+
+    if (shell_get_reply (me, SHELL_SUPER (super)->sockr, reply_str, sizeof (reply_str) - 1)
+        != PRELIM)
+        return -1;
+
+    errno = 0;
+    size = (off_t) g_ascii_strtoll (reply_str, NULL, 10);
+    return (errno != 0 || size < 0) ? -1 : size;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Read the file whose turn it is in a batch: linear_start without a command, the data is on the
+ * way already.
+ */
+
+static int
+shell_batch_start (struct vfs_class *me, vfs_file_handler_t *fh, off_t offset)
+{
+    shell_file_handler_t *shell = SHELL_FILE_HANDLER (fh);
+    struct vfs_s_super *super = VFS_FILE_HANDLER_SUPER (fh);
+    off_t size;
+
+    // only the file whose turn it is, once
+    if (fh->ino != SHELL_SUPER (super)->batch_ino || SHELL_SUPER (super)->batch_started)
+        ERRNOR (EBUSY, 0);
+
+    size = shell_batch_reply (me, super);
+    if (size < 0)
+        ERRNOR (E_REMOTE, 0);
+
+    fh->linear = LS_LINEAR_OPEN;
+    shell->total = size;
+    shell->got = 0;
+
+    // a reget: the whole file is sent, skip its start
+    offset = MIN (offset, size);
+    if (offset > 0)
+    {
+        if (!shell_discard (super, offset))
+            ERRNOR (E_REMOTE, 0);
+        shell->got = offset;
+    }
+
+    return 1;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Throw away the reply to getmany for a file of a batch that has not been read (skipped).
+ */
+
+static void
+shell_batch_skip (struct vfs_class *me, struct vfs_s_super *super)
+{
+    const off_t size = shell_batch_reply (me, super);
+
+    if (size >= 0 && shell_discard (super, size))
+        (void) shell_get_reply (me, SHELL_SUPER (super)->sockr, NULL, 0);
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 static int
 shell_linear_start (struct vfs_class *me, vfs_file_handler_t *fh, off_t offset)
@@ -1237,12 +1361,16 @@ shell_linear_start (struct vfs_class *me, vfs_file_handler_t *fh, off_t offset)
     char *name;
     char *quoted_name;
 
+    shell->append = FALSE;
+
+    if (SHELL_SUPER (super)->batch_left > 0)
+        return shell_batch_start (me, fh, offset);
+
     name = vfs_s_fullpath (me, fh->ino);
     if (name == NULL)
         return 0;
     quoted_name = str_shell_escape (name);
     g_free (name);
-    shell->append = FALSE;
 
     /*
      * Check whether the remote file is readable by using 'dd' to copy
@@ -1895,6 +2023,148 @@ shell_open (const vfs_path_t *vpath, int flags, mode_t mode)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+
+static gboolean
+shell_batch_plain (guint count, vfs_batch_cb_t cb, void *user_data)
+{
+    for (guint i = 0; i < count; i++)
+        if (!cb (i, user_data))
+            return FALSE;
+
+    return TRUE;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Read several files: one getmany command sends many of them one after the other, without waiting
+ * for a command and starting a program on the host for each of them. The files are read by the
+ * callback, with mc_open() and mc_read() as usual, from the replies on the way; the reply to a
+ * file the callback does not read is thrown away.
+ */
+
+static gboolean
+shell_batch (const vfs_path_t *const *vpaths, guint count, vfs_batch_cb_t cb, void *user_data)
+{
+    struct vfs_class *me = vfs_shell_ops;
+    struct vfs_s_super *super = NULL;
+    shell_super_t *shell_super;
+    struct vfs_s_inode **inos;
+    gboolean ok = TRUE;
+    guint i, start;
+
+    // the regular files of one connection go to the stream
+    inos = g_new0 (struct vfs_s_inode *, count);
+    for (i = 0; i < count; i++)
+    {
+        struct vfs_s_super *s = NULL;
+        const char *path;
+
+        path = vfs_s_get_path (vpaths[i], &s, 0);
+        if (path != NULL && (super == NULL || s == super))
+        {
+            struct vfs_s_inode *ino;
+
+            ino = vfs_s_find_inode (me, s, path, LINK_NO_FOLLOW, FL_NONE);
+            if (ino != NULL && S_ISREG (ino->st.st_mode))
+            {
+                inos[i] = ino;
+                super = s;
+            }
+        }
+    }
+
+    shell_super = SHELL_SUPER (super);
+    if (super == NULL || shell_super->scr_getmany == NULL
+        || (shell_super->host_flags & SHELL_HAVE_PERL) == 0 || shell_super->batch_left > 0)
+    {
+        g_free (inos);
+        return shell_batch_plain (count, cb, user_data);
+    }
+
+    // the rest one by one, first
+    for (i = 0; ok && i < count; i++)
+        if (inos[i] == NULL)
+            ok = cb (i, user_data);
+
+    for (start = 0; ok && start < count;)
+    {
+        GString *names;
+        guint end, n = 0;
+        off_t size = 0;
+
+        names = g_string_new ("set --");
+
+        for (end = start; end < count && n < SHELL_BATCH_FILES; end++)
+        {
+            char *name, *quoted_name;
+
+            if (inos[end] == NULL)
+                continue;
+
+            if (n != 0
+                && (names->len >= SHELL_BATCH_NAMES_SIZE
+                    || size + inos[end]->st.st_size > SHELL_BATCH_DATA_SIZE))
+                break;
+
+            name = vfs_s_fullpath (me, inos[end]);
+            quoted_name = str_shell_escape (name);
+            g_string_append_printf (names, " /%s", quoted_name);
+            g_free (quoted_name);
+            g_free (name);
+
+            size += inos[end]->st.st_size;
+            n++;
+        }
+
+        if (n == 0)
+        {
+            g_string_free (names, TRUE);
+            break;
+        }
+
+        vfs_print_message (_ ("shell: Getting %u files..."), n);
+
+        if (shell_command_v (me, super, NONE, shell_super->scr_getmany, "%s;\n", names->str)
+            != COMPLETE)
+        {
+            // one by one, each with its own command
+            for (i = start; ok && i < count; i++)
+                if (inos[i] != NULL)
+                    ok = cb (i, user_data);
+            g_string_free (names, TRUE);
+            break;
+        }
+        g_string_free (names, TRUE);
+
+        shell_super->batch_left = (int) n;
+        for (i = start; i < end; i++)
+        {
+            if (inos[i] == NULL)
+                continue;
+
+            shell_super->batch_ino = inos[i];
+            shell_super->batch_started = FALSE;
+
+            // after an abort the rest of the replies are only read
+            if (ok)
+                ok = cb (i, user_data);
+
+            if (!shell_super->batch_started)
+                shell_batch_skip (me, super);
+
+            shell_super->batch_left--;
+        }
+        shell_super->batch_ino = NULL;
+
+        start = end;
+    }
+
+    g_free (inos);
+
+    return ok;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /*** public functions ****************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
 
@@ -1934,6 +2204,7 @@ vfs_init_shell (void)
     shell_subclass.linear_start = shell_linear_start;
     shell_subclass.linear_read = shell_linear_read;
     shell_subclass.linear_close = shell_linear_close;
+    vfs_shell_ops->batch = shell_batch;
     vfs_register_class (vfs_shell_ops);
 }
 

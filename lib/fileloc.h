@@ -44,6 +44,7 @@
 #define VFS_SHELL_MV_FILE               "mv"
 #define VFS_SHELL_HARDLINK_FILE         "hardlink"
 #define VFS_SHELL_GET_FILE              "get"
+#define VFS_SHELL_GETMANY_FILE          "getmany"
 #define VFS_SHELL_SEND_FILE             "send"
 #define VFS_SHELL_APPEND_FILE           "append"
 #define VFS_SHELL_INFO_FILE             "info"
