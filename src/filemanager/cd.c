@@ -223,14 +223,6 @@ cd_make_vpath (const char *path)
 }
 
 /* --------------------------------------------------------------------------------------------- */
-
-static int
-cd_compare_names (gconstpointer a, gconstpointer b)
-{
-    return strcmp (*(const char *const *) a, *(const char *const *) b);
-}
-
-/* --------------------------------------------------------------------------------------------- */
 /**
  * Find the directories in @dir_vpath whose names match the shell wildcard @pattern. Like in the
  * shell, wildcards don't match a leading '.'.
@@ -272,7 +264,7 @@ cd_find_matching_dirs (const vfs_path_t *dir_vpath, const char *pattern)
     mc_closedir (dir);
 
     if (names != NULL)
-        g_ptr_array_sort (names, cd_compare_names);
+        g_ptr_array_sort_values (names, (GCompareFunc) strcmp);
 
     return names;
 }
