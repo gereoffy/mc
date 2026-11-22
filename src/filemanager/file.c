@@ -3698,6 +3698,24 @@ compute_dir_size (const vfs_path_t *dirname_vpath, dirsize_status_msg_t *sm, siz
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Whether @vpath1 and @vpath2 are on the same file system of the same host (a remote one is reached
+ * through one connection).
+ */
+
+static gboolean
+batch_same_host (const vfs_path_t *vpath1, const vfs_path_t *vpath2)
+{
+    const vfs_path_element_t *e1, *e2;
+
+    e1 = vfs_path_get_by_index (vpath1, -1);
+    e2 = vfs_path_get_by_index (vpath2, -1);
+
+    return e1->class == e2->class && g_strcmp0 (e1->host, e2->host) == 0
+        && g_strcmp0 (e1->user, e2->user) == 0 && e1->port == e2->port;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 static gboolean
 batch_copy_cb (guint index, void *user_data)
@@ -3848,9 +3866,9 @@ panel_operate (void *source_panel, FileOperation operation, gboolean force_singl
     ctx->total_transfer_start = g_get_monotonic_time ();
 
     /* an archive reads its files fastest in the order they are stored, a shell connection sends
-       many at once; not to the same file system: a copy within a host needs the connection */
+       many at once; not within one host: the copy writes through the same connection */
     ctx->batch = operation == OP_COPY && mc_batch_supported (panel->cwd_vpath)
-        && vfs_path_get_last_path_vfs (dest_vpath) != vfs_path_get_last_path_vfs (panel->cwd_vpath);
+        && !batch_same_host (panel->cwd_vpath, dest_vpath);
     ctx->batch_owner = -1;
 
 #ifdef ENABLE_BACKGROUND

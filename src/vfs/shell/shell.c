@@ -165,6 +165,7 @@ typedef struct
     int batch_left;
     struct vfs_s_inode *batch_ino;  // the file whose turn it is in the stream
     gboolean batch_started;         // its reply has been read by a linear read
+    gboolean batch_running;         // the directory cache doesn't expire: the batch holds inodes
 } shell_super_t;
 
 typedef struct
@@ -190,6 +191,7 @@ typedef struct
 /*** file scope variables ************************************************************************/
 
 static ssize_t (*shell_write_tmp) (void *fh, const char *buffer, size_t count) = NULL;
+static gboolean (*shell_dir_uptodate_tmp) (struct vfs_class *me, struct vfs_s_inode *ino) = NULL;
 
 static char reply_str[80];
 
@@ -2023,6 +2025,20 @@ shell_open (const vfs_path_t *vpath, int flags, mode_t mode)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * A directory read again would free the inodes of its files: not while a batch holds them.
+ */
+
+static gboolean
+shell_dir_uptodate (struct vfs_class *me, struct vfs_s_inode *ino)
+{
+    if (ino->super != NULL && SHELL_SUPER (ino->super)->batch_running)
+        return TRUE;
+
+    return shell_dir_uptodate_tmp (me, ino);
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 static gboolean
 shell_batch_plain (guint count, vfs_batch_cb_t cb, void *user_data)
@@ -2080,6 +2096,9 @@ shell_batch (const vfs_path_t *const *vpaths, guint count, vfs_batch_cb_t cb, vo
         g_free (inos);
         return shell_batch_plain (count, cb, user_data);
     }
+
+    // until the end the directories are not read again: that would free the inodes
+    shell_super->batch_running = TRUE;
 
     // the rest one by one, first
     for (i = 0; ok && i < count; i++)
@@ -2159,6 +2178,7 @@ shell_batch (const vfs_path_t *const *vpaths, guint count, vfs_batch_cb_t cb, vo
         start = end;
     }
 
+    shell_super->batch_running = FALSE;
     g_free (inos);
 
     return ok;
@@ -2190,6 +2210,8 @@ vfs_init_shell (void)
     vfs_shell_ops->rmdir = shell_rmdir;
     vfs_shell_ops->ctl = shell_ctl;
     shell_write_tmp = vfs_shell_ops->write;
+    shell_dir_uptodate_tmp = shell_subclass.dir_uptodate;
+    shell_subclass.dir_uptodate = shell_dir_uptodate;
     vfs_shell_ops->write = shell_write;
     shell_subclass.archive_same = shell_archive_same;
     shell_subclass.new_archive = shell_new_archive;

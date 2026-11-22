@@ -2,7 +2,8 @@ LC_TIME=C
 export LC_TIME
 # Send the files named in the arguments ("$@") one after the other, each as the get script sends
 # it: its size, "### 100", its data, "### 200"; or "### 500" if it cannot be read. A file that
-# changes while it is sent is sent with the size it had when opened, to keep the stream in step.
+# changes while it is sent is sent with the size it had when opened, to keep the stream in step;
+# if it has got shorter, the missing end is sent as zeros and "### 500" instead of "### 200".
 perl -e '
 use strict;
 binmode STDOUT;
@@ -27,8 +28,13 @@ foreach my $name (@ARGV) {
         print $buf;
         $left -= $n;
     }
-    print "\0" x $left if ($left > 0);
     close ($fh);
-    print "### 200\n";
+    if ($left > 0) {
+        # the file has got shorter: keep the stream in step, and report the copy as broken
+        print "\0" x $left;
+        print "### 500\n";
+    } else {
+        print "### 200\n";
+    }
 }
 ' "$@"
