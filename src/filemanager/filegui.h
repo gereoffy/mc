@@ -156,8 +156,11 @@ typedef struct
     gboolean batch;
     GPtrArray *batch_files;
     GPtrArray *batch_dirs;
-    // index of the marked panel entry being copied, until its copy is put to the batch
-    int batch_mark;
+    // the marked panel entry being walked (its index), or -1
+    int batch_owner;
+    /* the marked panel entries with files in the batch: the number of their files not copied yet,
+       or -1 if they are to stay marked (a file of them failed or was skipped) */
+    GHashTable *batch_owners;
 
     // User interface data goes here
     void *ui;

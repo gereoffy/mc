@@ -195,7 +195,7 @@ typedef struct
 {
     char *src;
     char *dst;
-    int mark;  // index of a marked panel entry to unmark when copied, or -1
+    int owner;  // the marked panel entry it belongs to (its index), or -1
 } batch_file_t;
 
 // a directory whose attributes are set after the files of the batch have been copied
@@ -1228,13 +1228,40 @@ batch_dir_free (void *data)
 
 /* --------------------------------------------------------------------------------------------- */
 /**
- * Put the copy of a file to the batch, to be done by batch_copy().
- *
- * @param mark index of the marked panel entry to unmark when the file has been copied, or -1
+ * Count @add more files of the marked panel entry @owner to copy, or one of them failed (!@ok):
+ * batch_copy() unmarks an entry when all its files have been copied.
  */
 
 static void
-batch_add_file (file_op_context_t *ctx, const char *src, const char *dst, int mark)
+batch_owner_update (file_op_context_t *ctx, int owner, int add, gboolean ok)
+{
+    gpointer key = GINT_TO_POINTER (owner);
+    int left = 0;
+
+    if (owner < 0)
+        return;
+
+    if (ctx->batch_owners == NULL)
+        ctx->batch_owners = g_hash_table_new (g_direct_hash, g_direct_equal);
+    else if (g_hash_table_contains (ctx->batch_owners, key))
+        left = GPOINTER_TO_INT (g_hash_table_lookup (ctx->batch_owners, key));
+
+    if (!ok)
+        left = -1;
+    else if (left >= 0)
+        left += add;
+
+    g_hash_table_insert (ctx->batch_owners, key, GINT_TO_POINTER (left));
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Put the copy of a file to the batch, to be done by batch_copy(). It belongs to the marked panel
+ * entry being walked (ctx->batch_owner).
+ */
+
+static void
+batch_add_file (file_op_context_t *ctx, const char *src, const char *dst)
 {
     batch_file_t *f;
 
@@ -1244,8 +1271,10 @@ batch_add_file (file_op_context_t *ctx, const char *src, const char *dst, int ma
     f = g_new (batch_file_t, 1);
     f->src = g_strdup (src);
     f->dst = g_strdup (dst);
-    f->mark = mark;
+    f->owner = ctx->batch_owner;
     g_ptr_array_add (ctx->batch_files, f);
+
+    batch_owner_update (ctx, f->owner, 1, TRUE);
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -1262,6 +1291,11 @@ batch_free (file_op_context_t *ctx)
     {
         g_ptr_array_free (ctx->batch_dirs, TRUE);
         ctx->batch_dirs = NULL;
+    }
+    if (ctx->batch_owners != NULL)
+    {
+        g_hash_table_destroy (ctx->batch_owners);
+        ctx->batch_owners = NULL;
     }
 }
 
@@ -2281,7 +2315,7 @@ operate_single_file (const WPanel *panel, file_op_context_t *ctx, const char *sr
 
 static FileProgressStatus
 operate_one_file (const WPanel *panel, file_op_context_t *ctx, const char *src,
-                  struct stat *src_stat, const char *dest)
+                  struct stat *src_stat, const char *dest, int owner)
 {
     FileProgressStatus value = FILE_CONT;
     vfs_path_t *src_vpath;
@@ -2319,15 +2353,15 @@ operate_one_file (const WPanel *panel, file_op_context_t *ctx, const char *src,
                 ctx->stat_func (src_vpath, src_stat);
                 is_file = !S_ISDIR (src_stat->st_mode);
 
-                if (is_file && ctx->batch && ctx->batch_mark >= 0)
-                {
-                    batch_add_file (ctx, src, dest, ctx->batch_mark);
-                    ctx->batch_mark = -1;
-                }
+                // the files put to the batch belong to the marked entry @owner
+                ctx->batch_owner = owner;
+                if (is_file && ctx->batch)
+                    batch_add_file (ctx, src, dest);
                 else if (is_file)
                     value = copy_file_file (ctx, src, dest);
                 else
                     value = copy_dir_dir (ctx, src, dest, TRUE, FALSE, FALSE, NULL);
+                ctx->batch_owner = -1;
                 dest_dirs = free_linklist (dest_dirs);
                 break;
 
@@ -3222,7 +3256,6 @@ copy_dir_dir (file_op_context_t *ctx, const char *s, const char *d, gboolean top
     link_t *lp;
     vfs_path_t *src_vpath, *dst_vpath;
     gboolean do_mkdir = TRUE;
-    gboolean batched = FALSE;
 
     src_vpath = vfs_path_from_str (s);
     dst_vpath = vfs_path_from_str (d);
@@ -3463,8 +3496,7 @@ retry_dst_stat:
             dest_file = mc_build_filename (d, x_basename (path), (char *) NULL);
             if (ctx->batch && !do_delete)
             {
-                batch_add_file (ctx, path, dest_file, -1);
-                batched = TRUE;
+                batch_add_file (ctx, path, dest_file);
             }
             else
                 return_status = copy_file_file (ctx, path, dest_file);
@@ -3495,8 +3527,9 @@ retry_dst_stat:
     }
     mc_closedir (reading);
 
-    // the files put to the batch are written later: the attributes of the directory after them
-    if (batched)
+    /* the files put to the batch are written later: the attributes of the directory after them,
+       also of one with subdirectories only (a mode without x would forbid writing below it) */
+    if (ctx->batch && !do_delete)
         batch_add_dir (ctx, dst_vpath, &src_stat, attrs_ok, attrs);
     else
         copy_dir_set_attrs (ctx, dst_vpath, &src_stat, attrs_ok, attrs);
@@ -3665,6 +3698,24 @@ compute_dir_size (const vfs_path_t *dirname_vpath, dirsize_status_msg_t *sm, siz
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Whether @vpath1 and @vpath2 are on the same file system of the same host (a remote one is reached
+ * through one connection).
+ */
+
+static gboolean
+batch_same_host (const vfs_path_t *vpath1, const vfs_path_t *vpath2)
+{
+    const vfs_path_element_t *e1, *e2;
+
+    e1 = vfs_path_get_by_index (vpath1, -1);
+    e2 = vfs_path_get_by_index (vpath2, -1);
+
+    return e1->class == e2->class && g_strcmp0 (e1->host, e2->host) == 0
+        && g_strcmp0 (e1->user, e2->user) == 0 && e1->port == e2->port;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 static gboolean
 batch_copy_cb (guint index, void *user_data)
@@ -3680,8 +3731,7 @@ batch_copy_cb (guint index, void *user_data)
         return FALSE;
     }
 
-    if (value == FILE_CONT && f->mark >= 0)
-        do_file_mark (run->panel, f->mark, 0);
+    batch_owner_update (run->ctx, f->owner, -1, value == FILE_CONT);
 
     return TRUE;
 }
@@ -3728,6 +3778,18 @@ batch_copy (file_op_context_t *ctx, WPanel *panel, FileProgressStatus status)
 
             copy_dir_set_attrs (ctx, d->dst_vpath, &d->src_stat, d->attrs_ok, d->attrs);
         }
+
+    // unmark the marked entries all of whose files have been copied
+    if (ctx->batch_owners != NULL)
+    {
+        GHashTableIter iter;
+        gpointer key, left;
+
+        g_hash_table_iter_init (&iter, ctx->batch_owners);
+        while (g_hash_table_iter_next (&iter, &key, &left))
+            if (GPOINTER_TO_INT (left) == 0)
+                do_file_mark (panel, GPOINTER_TO_INT (key), 0);
+    }
 
     batch_free (ctx);
 
@@ -3804,10 +3866,10 @@ panel_operate (void *source_panel, FileOperation operation, gboolean force_singl
     ctx->total_transfer_start = g_get_monotonic_time ();
 
     /* an archive reads its files fastest in the order they are stored, a shell connection sends
-       many at once; not to the same file system: a copy within a host needs the connection */
+       many at once; not within one host: the copy writes through the same connection */
     ctx->batch = operation == OP_COPY && mc_batch_supported (panel->cwd_vpath)
-        && vfs_path_get_last_path_vfs (dest_vpath) != vfs_path_get_last_path_vfs (panel->cwd_vpath);
-    ctx->batch_mark = -1;
+        && !batch_same_host (panel->cwd_vpath, dest_vpath);
+    ctx->batch_owner = -1;
 
 #ifdef ENABLE_BACKGROUND
     // Did the user select to do a background operation?
@@ -3929,15 +3991,20 @@ panel_operate (void *source_panel, FileOperation operation, gboolean force_singl
                 source2 = panel->dir.list[i].fname->str;
                 src_stat = panel->dir.list[i].st;
 
-                ctx->batch_mark = i;
-                value = operate_one_file (panel, ctx, source2, &src_stat, dest);
+                value = operate_one_file (panel, ctx, source2, &src_stat, dest, i);
                 if (value == FILE_ABORT)
                     break;
 
-                // a file put to the batch is unmarked when it has been copied
-                if (value == FILE_CONT && ctx->batch_mark == i)
+                /* an entry with files in the batch is unmarked by batch_copy() when they have been
+                   copied, and stays marked if it has not been walked through */
+                if (ctx->batch_owners != NULL
+                    && g_hash_table_contains (ctx->batch_owners, GINT_TO_POINTER (i)))
+                {
+                    if (value != FILE_CONT)
+                        batch_owner_update (ctx, i, 0, FALSE);
+                }
+                else if (value == FILE_CONT)
                     do_file_mark (panel, i, 0);
-                ctx->batch_mark = -1;
 
                 mc_refresh ();
             }  // Loop for every file
