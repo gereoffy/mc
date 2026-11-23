@@ -8,9 +8,18 @@ carries them until they are merged there.
 For the description of Midnight Commander itself see [README](README) and the
 [upstream site](https://midnight-commander.org/).
 
-A source archive of the current `master`, which builds with `./configure && make`
-(no autotools needed), is published for every push:
-[mc-latest.tar.gz](https://github.com/gereoffy/mc/releases/latest/download/mc-latest.tar.gz).
+For every push to `master` the following are published:
+
+* a source archive, which builds with `./configure && make` (no autotools needed):
+  [mc-latest.tar.gz](https://github.com/gereoffy/mc/releases/latest/download/mc-latest.tar.gz);
+* a package for Ubuntu 22.04 (amd64), with sftp and the archive file system
+  (libarchive 3.8.11 with 7-Zip AES built in), which replaces the `mc` and
+  `mc-data` packages of Ubuntu:
+  [mc-latest-ubuntu22.04-amd64.deb](https://github.com/gereoffy/mc/releases/latest/download/mc-latest-ubuntu22.04-amd64.deb).
+  Install it with `sudo apt install ./mc-latest-ubuntu22.04-amd64.deb`; apt
+  installs the libraries it needs. It is built by `.github/scripts/build-deb.sh`,
+  which can be run on other Debian based systems as well (tested on Ubuntu 22.04
+  only).
 
 ## Only in this fork
 

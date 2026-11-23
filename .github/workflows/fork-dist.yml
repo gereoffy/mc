@@ -1,9 +1,10 @@
 name: fork-dist
 
 # Build a distribution archive (with the generated configure script, so it
-# needs no autotools) for every push to master, and publish it as a release.
-# The latest one is always at:
+# needs no autotools) for every push to master, and publish it as a release,
+# with an Ubuntu 22.04 package built from it. The latest ones are always at:
 # https://github.com/gereoffy/mc/releases/latest/download/mc-latest.tar.gz
+# https://github.com/gereoffy/mc/releases/latest/download/mc-latest-ubuntu22.04-amd64.deb
 
 on:
   push:
@@ -24,6 +25,9 @@ jobs:
     permissions:
       contents: write
 
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,6 +44,7 @@ jobs:
           sudo apt-get install -y libglib2.0-dev libslang2-dev
 
       - name: Build distribution archive
+        id: build
         run: |
           ./autogen.sh
           ./configure
@@ -48,6 +53,13 @@ jobs:
           test -f "mc-${version}.tar.gz"
           cp "mc-${version}.tar.gz" mc-latest.tar.gz
           echo "VERSION=${version}" >> "$GITHUB_ENV"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: mc-${{ env.VERSION }}.tar.gz
+          retention-days: 1
 
       # "gh release create" makes a lightweight tag, which "git describe" ignores
       - name: Publish release
@@ -57,6 +69,38 @@ jobs:
           gh release create "dist-${VERSION}" \
               --target "${GITHUB_SHA}" \
               --title "mc ${VERSION}" \
-              --notes "Built from ${GITHUB_SHA}. Build with: ./configure && make" \
+              --notes "Built from ${GITHUB_SHA}. Build with: ./configure && make. Ubuntu 22.04: sudo apt install ./mc-latest-ubuntu22.04-amd64.deb" \
               --latest \
               "mc-${VERSION}.tar.gz" mc-latest.tar.gz
+
+  # the package is built from the distribution archive, so that is tested too
+  deb:
+    needs: dist
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    permissions:
+      contents: write
+
+    env:
+      VERSION: ${{ needs.dist.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Build package
+        run: sh .github/scripts/build-deb.sh "dist/mc-${VERSION}.tar.gz" out "${{ runner.temp }}/deb"
+
+      - name: Add to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          deb=$(ls out/*.deb)
+          cp "$deb" out/mc-latest-ubuntu22.04-amd64.deb
+          gh release upload "dist-${VERSION}" "$deb" out/mc-latest-ubuntu22.04-amd64.deb
