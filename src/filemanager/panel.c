@@ -2384,6 +2384,22 @@ goto_child_dir (WPanel *panel)
         panel_cd (panel, vpath, cd_exact);
         vfs_path_free (vpath, TRUE);
     }
+#ifdef ENABLE_VFS_ARCHIVE
+    else if (fe != NULL && (S_ISREG (fe->st.st_mode) || S_ISLNK (fe->st.st_mode)))
+    {
+        // enter a file as an archive, whatever its name is (docx, jar, apk, odt, epub, ...)
+        char *path;
+        vfs_path_t *vpath;
+
+        path = g_strconcat (fe->fname->str, PATH_SEP_STR "uarchive" VFS_PATH_URL_DELIMITER,
+                            (char *) NULL);
+        vpath = vfs_path_from_str (path);
+        // archivefs tells why it can't open the file
+        panel_cd (panel, vpath, cd_exact);
+        vfs_path_free (vpath, TRUE);
+        g_free (path);
+    }
+#endif
 }
 
 /* --------------------------------------------------------------------------------------------- */
