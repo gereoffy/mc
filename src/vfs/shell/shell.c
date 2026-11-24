@@ -909,6 +909,12 @@ shell_parse_ls (char *buffer, struct vfs_s_entry *ent)
     }
     break;
 
+    case 'T':
+        // seconds since the epoch: unlike 'd' and 'D', independent of the time zones
+        vfs_zero_stat_times (&ST);
+        ST.st_atime = ST.st_mtime = ST.st_ctime = (time_t) g_ascii_strtoll (buffer, NULL, 10);
+        break;
+
     case 'E':
     {
         int maj, min;
