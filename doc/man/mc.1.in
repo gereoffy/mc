@@ -528,7 +528,9 @@ become panelized.
 .TP
 .B C\-PageUp, C\-PageDown
 only when supported by the terminal: change to ".." and to the currently
-selected directory respectively.
+selected directory respectively. C\-PageDown on a file opens it as an
+archive (with the archive file system, if built in), whatever its name is:
+for example a .docx, .odt, .jar or .apk file, which are zip archives.
 .TP
 .B Alt\-y
 moves to the previous directory in the history, equivalent to clicking
