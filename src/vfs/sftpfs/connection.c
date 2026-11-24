@@ -52,6 +52,7 @@
 /*** file scope macro definitions ****************************************************************/
 
 #define SHA1_DIGEST_LENGTH 20
+#define SHA256_DIGEST_LENGTH 32
 
 /*** file scope type declarations ****************************************************************/
 
@@ -77,7 +78,13 @@ static const char *const hostkey_method_ssh_ecdsa_256 = "ecdsa-sha2-nistp256";
 static const char *const hostkey_method_ssh_rsa = "rsa-sha2-512,rsa-sha2-256,ssh-rsa";
 static const char *const hostkey_method_ssh_dss = "ssh-dss";
 
+/* The order of OpenSSH: ssh shows (and puts into known_hosts) the same key of a new host,
+ * and the key ssh stored with a hashed host name is found. */
 static const char *default_hostkey_methods =
+#ifdef LIBSSH2_KNOWNHOST_KEY_ED25519
+    "ssh-ed25519,"
+    "ssh-ed25519-cert-v01@openssh.com,"
+#endif
 #ifdef LIBSSH2_KNOWNHOST_KEY_ECDSA_256
     "ecdsa-sha2-nistp256,"
 #endif
@@ -96,12 +103,8 @@ static const char *default_hostkey_methods =
 #ifdef LIBSSH2_KNOWNHOST_KEY_ECDSA_521
     "ecdsa-sha2-nistp521-cert-v01@openssh.com,"
 #endif
-#ifdef LIBSSH2_KNOWNHOST_KEY_ED25519
-    "ssh-ed25519,"
-    "ssh-ed25519-cert-v01@openssh.com,"
-#endif
-    "rsa-sha2-256,"
     "rsa-sha2-512,"
+    "rsa-sha2-256,"
     "ssh-rsa,"
     "ssh-rsa-cert-v01@openssh.com,"
     "ssh-dss";
@@ -385,6 +388,10 @@ sftpfs_read_known_hosts (struct vfs_s_super *super, GError **mcerror)
         if (rc < 0)
             goto err;
     }
+    else if (libssh2_session_method_pref (sftpfs_super->session, LIBSSH2_METHOD_HOSTKEY,
+                                          default_hostkey_methods)
+             < 0)
+        goto err;
 
     return TRUE;
 
@@ -440,30 +447,48 @@ sftpfs_update_known_hosts (struct vfs_s_super *super, const char *remote_key, si
 
 /* --------------------------------------------------------------------------------------------- */
 /**
- * Compute and return readable host key fingerprint hash.
+ * Compute and return readable host key fingerprint hash, in the form shown by OpenSSH:
+ * "SHA256:" and the base64 encoded hash without padding ("SHA1:" and hex digits with an old
+ * libssh2).
  *
  * @param session libssh2 session handle
- * @return pointer to static buffer on success, NULL otherwise
+ * @return newly allocated string on success, NULL otherwise
  */
-static const char *
+static char *
 sftpfs_compute_fingerprint_hash (LIBSSH2_SESSION *session)
 {
-    static char result[SHA1_DIGEST_LENGTH * 3 + 1];  // "XX:" for each byte, and EOL
-    const char *fingerprint;
-    size_t i;
-
     // The fingerprint points to static storage (!), don't free() it.
+    const char *fingerprint;
+
+#ifdef LIBSSH2_HOSTKEY_HASH_SHA256
+    fingerprint = libssh2_hostkey_hash (session, LIBSSH2_HOSTKEY_HASH_SHA256);
+    if (fingerprint != NULL)
+    {
+        char *b64, *result;
+        size_t len;
+
+        b64 = g_base64_encode ((const guchar *) fingerprint, SHA256_DIGEST_LENGTH);
+        for (len = strlen (b64); len > 0 && b64[len - 1] == '='; len--)
+            ;
+        result = g_strdup_printf ("SHA256:%.*s", (int) len, b64);
+        g_free (b64);
+        return result;
+    }
+#endif
+
     fingerprint = libssh2_hostkey_hash (session, LIBSSH2_HOSTKEY_HASH_SHA1);
-    if (fingerprint == NULL)
-        return NULL;
+    if (fingerprint != NULL)
+    {
+        GString *result;
+        size_t i;
 
-    for (i = 0; i < SHA1_DIGEST_LENGTH && i * 3 < sizeof (result) - 1; i++)
-        g_snprintf ((gchar *) (result + i * 3), 4, "%02x:", (guint8) fingerprint[i]);
+        result = g_string_new ("SHA1");
+        for (i = 0; i < SHA1_DIGEST_LENGTH; i++)
+            g_string_append_printf (result, ":%02x", (guint8) fingerprint[i]);
+        return g_string_free (result, FALSE);
+    }
 
-    // remove last ":"
-    result[i * 3 - 1] = '\0';
-
-    return result;
+    return NULL;
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -483,7 +508,7 @@ sftpfs_process_known_host (struct vfs_s_super *super, GError **mcerror)
     sftpfs_super_t *sftpfs_super = SFTP_SUPER (super);
     const char *remote_key;
     const char *key_type;
-    const char *fingerprint_hash;
+    char *fingerprint_hash;
     size_t remote_key_len = 0;
     int remote_key_type = LIBSSH2_HOSTKEY_TYPE_UNKNOWN;
     int keybit = 0;
@@ -567,7 +592,7 @@ sftpfs_process_known_host (struct vfs_s_super *super, GError **mcerror)
         // no host match was found -- add it to the known_hosts file
         msg = g_strdup_printf (
             _ ("The authenticity of host\n%s (%s)\ncan't be established!\n"
-               "%s key fingerprint hash is\nSHA1:%s.\n"
+               "%s key fingerprint is\n%s.\n"
                "Do you want to add it to the list of known hosts and continue connecting?"),
             super->path_element->host, sftpfs_super->ip_address, key_type, fingerprint_hash);
         // Select "No" initially
@@ -590,6 +615,8 @@ sftpfs_process_known_host (struct vfs_s_super *super, GError **mcerror)
         handle_query = TRUE;
         break;
     }
+
+    MC_PTR_FREE (fingerprint_hash);
 
     if (handle_query)
         switch (rc)
@@ -618,6 +645,7 @@ err:
 {
     int sftp_errno;
 
+    g_free (fingerprint_hash);
     sftp_errno = libssh2_session_last_errno (sftpfs_super->session);
     sftpfs_ssherror_to_gliberror (sftpfs_super, sftp_errno, mcerror);
 }
