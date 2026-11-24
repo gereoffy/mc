@@ -38,6 +38,9 @@ For every push to `master` the following are published:
 * **Copying out of an archive in the order the files are stored**: a solid or
   compressed archive is read in one pass instead of from its start again for
   every file (200 marked files of a `.tar.xz`: 45 s → 0.8 s).
+* **Ctrl-PgDn on a file opens it as an archive**, whatever its name is: an
+  archive without the usual extension, or a `.docx`, `.odt`, `.jar`, `.apk`
+  file, which are zip archives.
 * **Read-only btrfs image file system** (`ubtrfs://`, `--enable-vfs-btrfs`).
 
 ### Shell link (`sh://`)
@@ -81,8 +84,11 @@ For every push to `master` the following are published:
 
 ### File manager
 
-* Alt-Enter in the destination field of the copy/move dialog inserts the name of
-  the source file (upstream PR #5195).
+* Copying or moving one file or directory offers the name of it in the other
+  panel as the destination, ready to edit; a destination with the same name as
+  the source is merged with an existing directory of that name, not copied into
+  it (add a trailing `/` for that). Alt-Enter in the destination field inserts
+  the name of the source file (upstream PR #5195).
 * `cd` on the command line expands shell wildcards: `cd fo*`, `cd s*/i*2`
   (upstream PR #5210).
 * The size of the current file is shown above the mini status line; the mini
