@@ -116,6 +116,10 @@ static const char *default_hostkey_methods =
  *
  */
 
+// keyboard-interactive authentication: number of the attempt, input cancelled by the user
+static int kbi_attempt = 0;
+static gboolean kbi_cancelled = FALSE;
+
 /* --------------------------------------------------------------------------------------------- */
 /*** file scope functions ************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
@@ -834,7 +838,7 @@ static LIBSSH2_USERAUTH_KBDINT_RESPONSE_FUNC (sftpfs_keyboard_interactive_helper
     (void) name_len;
     (void) abstract;
 
-    for (i = 0; i < num_prompts; ++i)
+    for (i = 0; i < num_prompts && !kbi_cancelled; ++i)
     {
         char *full_prompt;
         char *passwd;
@@ -843,6 +847,14 @@ static LIBSSH2_USERAUTH_KBDINT_RESPONSE_FUNC (sftpfs_keyboard_interactive_helper
             ? g_strdup_printf ("%.*s\n%.*s", instruction_len, instruction, (int) prompts[i].length,
                                prompts[i].text)
             : g_strndup ((const char *) prompts[i].text, prompts[i].length);
+        if (kbi_attempt > 0 && i == 0)
+        {
+            char *tmp = full_prompt;
+
+            full_prompt = g_strconcat (_ ("Permission denied, please try again."), "\n", tmp,
+                                       (char *) NULL);
+            g_free (tmp);
+        }
         passwd = input_dialog (_ ("SFTP authentication"), full_prompt, "mc.vfs.password",
                                prompts[i].echo != 0 ? "" : INPUT_PASSWORD, INPUT_COMPLETE_NONE);
 
@@ -854,6 +866,8 @@ static LIBSSH2_USERAUTH_KBDINT_RESPONSE_FUNC (sftpfs_keyboard_interactive_helper
             responses[i].length = strlen (passwd);
             g_free (passwd);
         }
+        else
+            kbi_cancelled = TRUE;
         g_free (full_prompt);
     }
 }
@@ -877,8 +891,23 @@ sftpfs_open_connection_ssh_keyboard_interactive (struct vfs_s_super *super, GErr
     if ((sftpfs_super->auth_type & KEYBOARD_INTERACTIVE) == 0)
         return FALSE;
 
-    rc = libssh2_userauth_keyboard_interactive (sftpfs_super->session, super->path_element->user,
-                                                sftpfs_keyboard_interactive_helper);
+    // ask again after a wrong answer, as ssh does
+    kbi_cancelled = FALSE;
+    for (kbi_attempt = 0, rc = -1; kbi_attempt < 3 && rc != 0 && !kbi_cancelled; kbi_attempt++)
+    {
+        rc = libssh2_userauth_keyboard_interactive (sftpfs_super->session,
+                                                    super->path_element->user,
+                                                    sftpfs_keyboard_interactive_helper);
+        if (rc != 0 && rc != LIBSSH2_ERROR_AUTHENTICATION_FAILED)
+            break;
+    }
+
+    if (rc != 0 && kbi_cancelled)
+    {
+        mc_propagate_error (mcerror, 0, "%s", _ ("sftp: connection interrupted by user"));
+        return FALSE;
+    }
+
     // A kbi auth failure is not fatal here; password auth may still succeed
     return rc == 0;
 }
@@ -1002,7 +1031,14 @@ sftpfs_open_connection (struct vfs_s_super *super, GError **mcerror)
         && !sftpfs_open_connection_ssh_key (super, mcerror)
         && !sftpfs_open_connection_ssh_keyboard_interactive (super, mcerror)
         && !sftpfs_open_connection_ssh_password (super, mcerror))
+    {
+        // without this, the error shown would be a stale errno
+        if (mcerror != NULL && *mcerror == NULL)
+            mc_propagate_error (mcerror, 0, _ ("sftp: authentication failed for %s"),
+                                super->path_element->user);
+        super->me->verrno = EACCES;
         return (-1);
+    }
 
     sftpfs_super->sftp_session = libssh2_sftp_init (sftpfs_super->session);
 
