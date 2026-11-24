@@ -2144,8 +2144,17 @@ do_confirm_copy_move (const WPanel *panel, gboolean force_single, const char *so
      * It saves user from occasional file renames (when destination
      * dir is deleted)
      */
-    if (!force_single && tmp_dest_dir != NULL && tmp_dest_dir[0] != '\0'
-        && !IS_PATH_SEP (tmp_dest_dir[strlen (tmp_dest_dir) - 1]))
+    if (!force_single && source != NULL && tmp_dest_dir != NULL && tmp_dest_dir[0] != '\0')
+    {
+        // one file or directory: the destination is the name of it in the other panel,
+        // which can be edited (the same as the destination directory, see file_mask_dialog())
+        dest_dir = g_strconcat (tmp_dest_dir,
+                                IS_PATH_SEP (tmp_dest_dir[strlen (tmp_dest_dir) - 1]) ? ""
+                                                                                      : PATH_SEP_STR,
+                                x_basename (source), (char *) NULL);
+    }
+    else if (!force_single && tmp_dest_dir != NULL && tmp_dest_dir[0] != '\0'
+             && !IS_PATH_SEP (tmp_dest_dir[strlen (tmp_dest_dir) - 1]))
     {
         // add trailing separator
         dest_dir = g_strconcat (tmp_dest_dir, PATH_SEP_STR, (char *) NULL);

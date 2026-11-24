@@ -1529,6 +1529,22 @@ file_mask_dialog (file_op_context_t *ctx, gboolean only_one, const char *format,
         else
             ctx->dest_mask++;
 
+        /* "dir/name" with the name of the only source is the same as "dir/": the source is
+           copied to dir/name, merged with it if it is an existing directory, never copied
+           into it (to copy into it, add a trailing slash) */
+        if (only_one && fmd_src_name != NULL && ctx->dest_mask != dest_dir)
+        {
+            char *name;
+
+            if (source_easy_patterns)
+                name = str_glob_escape (x_basename (fmd_src_name));
+            else
+                name = str_regex_escape (x_basename (fmd_src_name));
+            if (strcmp (ctx->dest_mask, name) == 0)
+                *ctx->dest_mask = '\0';
+            g_free (name);
+        }
+
         orig_mask = ctx->dest_mask;
 
         if (*ctx->dest_mask == '\0'
