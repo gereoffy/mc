@@ -944,14 +944,24 @@ sftpfs_open_connection_ssh_password (struct vfs_s_super *super, GError **mcerror
             return TRUE;
     }
 
-    p = g_strdup_printf (_ ("sftp: Enter password for %s "), super->path_element->user);
-    passwd = vfs_get_password (p);
-    g_free (p);
-
-    if (passwd == NULL)
-        mc_propagate_error (mcerror, 0, "%s", _ ("sftp: Password is empty."));
-    else
+    // ask again after a wrong password, as ssh does
+    for (int attempt = 0; attempt < 3 && !ret_value; attempt++)
     {
+        if (attempt == 0)
+            p = g_strdup_printf (_ ("sftp: Enter password for %s "), super->path_element->user);
+        else
+            p = g_strdup_printf (_ ("Permission denied, please try again.\n"
+                                    "sftp: Enter password for %s "),
+                                 super->path_element->user);
+        passwd = vfs_get_password (p);
+        g_free (p);
+
+        if (passwd == NULL)
+        {
+            mc_propagate_error (mcerror, 0, "%s", _ ("sftp: Password is empty."));
+            break;
+        }
+
         rc = libssh2_userauth_password (sftpfs_super->session, super->path_element->user, passwd);
 
         if (rc == 0)
@@ -961,7 +971,11 @@ sftpfs_open_connection_ssh_password (struct vfs_s_super *super, GError **mcerror
             super->path_element->password = passwd;
         }
         else
+        {
             g_free (passwd);
+            if (rc != LIBSSH2_ERROR_AUTHENTICATION_FAILED)
+                break;
+        }
     }
 
     return ret_value;
@@ -1036,7 +1050,7 @@ sftpfs_open_connection (struct vfs_s_super *super, GError **mcerror)
         if (mcerror != NULL && *mcerror == NULL)
             mc_propagate_error (mcerror, 0, _ ("sftp: authentication failed for %s"),
                                 super->path_element->user);
-        super->me->verrno = EACCES;
+        errno = EACCES;
         return (-1);
     }
 
