@@ -56,16 +56,35 @@ For every push to `master` the following are published:
   host differs (a server running in UTC, for example), and keep the seconds
   (upstream ticket #5059; needs perl on the host).
 
-### SFTP and FTP
+### SFTP
 
-* sftp: directory cache like the other network file systems (upstream PR #5180),
-  default key files and rsa-sha2 host keys, no failure on a write not yet
-  acknowledged.
-* sftp: keyboard-interactive authentication shows the prompts of the server
-  (one-time codes too) (upstream PR #5162); a wrong password is asked again
-  (three times, as ssh does), a failed login tells "authentication failed",
-  and a cancelled password input just returns, without error messages.
-* ftp: reconnect after the idle timeout of the server, remembering the password.
+* **Faster directories**: listings are cached as on the other network file
+  systems, so a directory with many files opens much faster, and going back to
+  a directory doesn't list it again; Ctrl-R reloads it (upstream PR #5180).
+* **SSH keys as with ssh**: your usual keys (`~/.ssh/id_ed25519`, `id_ecdsa`,
+  `id_rsa`) are used without setting them in `~/.ssh/config`; the passphrase of
+  a key is asked only if it's needed.
+* **Host keys as with ssh**: a new host is shown with the same key type and
+  fingerprint (`SHA256:…`) as `ssh` shows, so you can compare them; hosts that
+  ssh already knows (also with hashed names, as on Ubuntu) are accepted without
+  asking again, and newer servers with RSA host keys are not reported as unknown.
+* **Password login**: a wrong password is asked again (up to three times, as by
+  ssh); Esc or Cancel just goes back, without error messages; if the login fails,
+  the error says so. Servers asking other questions (one-time codes, two-factor
+  login) show their own questions (upstream PR #5162).
+* **Uploads to small devices**: copying files to servers running dropbear
+  (routers, embedded systems) no longer fails.
+
+### FTP
+
+* **Idle connections**: when the server has closed a connection that was idle
+  for a while, mc connects again and repeats the command, instead of failing
+  (Ctrl-R jumped to the parent directory, overwriting a file failed).
+* **No password asked again**: mc also closes a connection not used for a minute
+  (Options → Virtual FS → "Timeout for freeing VFSs"), and the next use
+  connects again. The password you typed is kept in memory until mc exits (it
+  is never saved to a file), so it isn't asked again for every new connection;
+  a wrong password is forgotten.
 
 ### Viewer (mcview)
 
