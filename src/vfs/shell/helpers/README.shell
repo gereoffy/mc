@@ -71,6 +71,7 @@ P<unix permissions> <owner>.<group>
 S<size>
 d<3-letters month name> <day> <year or HH:MM>
 D<year> <month> <day> <hour> <minute> <second>[.1234]
+T<modification time in seconds since the epoch>
 E<major-of-device>,<minor>
 :<filename>
 L<filename symlink points to>
