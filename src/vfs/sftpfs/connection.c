@@ -119,6 +119,8 @@ static const char *default_hostkey_methods =
 // keyboard-interactive authentication: number of the attempt, input cancelled by the user
 static int kbi_attempt = 0;
 static gboolean kbi_cancelled = FALSE;
+// a password input was cancelled: no more methods, no error message besides that of the caller
+static gboolean auth_cancelled = FALSE;
 
 /* --------------------------------------------------------------------------------------------- */
 /*** file scope functions ************************************************************************/
@@ -903,10 +905,7 @@ sftpfs_open_connection_ssh_keyboard_interactive (struct vfs_s_super *super, GErr
     }
 
     if (rc != 0 && kbi_cancelled)
-    {
-        mc_propagate_error (mcerror, 0, "%s", _ ("sftp: connection interrupted by user"));
-        return FALSE;
-    }
+        auth_cancelled = TRUE;
 
     // A kbi auth failure is not fatal here; password auth may still succeed
     return rc == 0;
@@ -931,7 +930,7 @@ sftpfs_open_connection_ssh_password (struct vfs_s_super *super, GError **mcerror
 
     mc_return_val_if_error (mcerror, FALSE);
 
-    if ((sftpfs_super->auth_type & PASSWORD) == 0)
+    if ((sftpfs_super->auth_type & PASSWORD) == 0 || auth_cancelled)
         return FALSE;
 
     if (super->path_element->password != NULL)
@@ -958,7 +957,7 @@ sftpfs_open_connection_ssh_password (struct vfs_s_super *super, GError **mcerror
 
         if (passwd == NULL)
         {
-            mc_propagate_error (mcerror, 0, "%s", _ ("sftp: Password is empty."));
+            auth_cancelled = TRUE;
             break;
         }
 
@@ -1041,16 +1040,22 @@ sftpfs_open_connection (struct vfs_s_super *super, GError **mcerror)
         return (-1);
     }
 
+    auth_cancelled = FALSE;
     if (!sftpfs_open_connection_ssh_agent (super, mcerror)
         && !sftpfs_open_connection_ssh_key (super, mcerror)
         && !sftpfs_open_connection_ssh_keyboard_interactive (super, mcerror)
         && !sftpfs_open_connection_ssh_password (super, mcerror))
     {
         // without this, the error shown would be a stale errno
-        if (mcerror != NULL && *mcerror == NULL)
-            mc_propagate_error (mcerror, 0, _ ("sftp: authentication failed for %s"),
-                                super->path_element->user);
-        errno = EACCES;
+        if (auth_cancelled)
+            errno = ECANCELED;
+        else
+        {
+            if (mcerror != NULL && *mcerror == NULL)
+                mc_propagate_error (mcerror, 0, _ ("sftp: authentication failed for %s"),
+                                    super->path_element->user);
+            errno = EACCES;
+        }
         return (-1);
     }
 
