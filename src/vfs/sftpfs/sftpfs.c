@@ -687,7 +687,16 @@ sftpfs_open_archive (struct vfs_s_super *super, const vfs_path_t *vpath,
                                    vfs_s_default_stat (vpath_element->class, S_IFDIR | 0755));
 
     ret_value = sftpfs_open_connection (super, &mcerror);
-    mc_error_message (&mcerror, NULL);
+    if (ret_value != 0)
+    {
+        // the error dialog must not change the error number told by the caller (sftpfs_cb_errno)
+        int save_errno = errno;
+
+        mc_error_message (&mcerror, NULL);
+        errno = save_errno;
+    }
+    else
+        mc_error_message (&mcerror, NULL);
     return ret_value;
 }
 
@@ -703,6 +712,7 @@ static void
 sftpfs_free_archive (struct vfs_class *me, struct vfs_s_super *super)
 {
     GError *mcerror = NULL;
+    int save_errno = errno;  // a failed connection is closed before its error is told
 
     (void) me;
 
@@ -711,6 +721,7 @@ sftpfs_free_archive (struct vfs_class *me, struct vfs_s_super *super)
     vfs_path_element_free (SFTP_SUPER (super)->original_connection_info);
 
     mc_error_message (&mcerror, NULL);
+    errno = save_errno;
 }
 
 /* --------------------------------------------------------------------------------------------- */
