@@ -49,12 +49,17 @@ For every push to `master` the following are published:
   pieces while it is written; Skip and Abort stop the upload.
 * Error handling of the remote send, append and unlink scripts, and fixes of the
   `dd` based scripts (upstream PRs #5157, #5159 and fixes on top of them).
+* Times in UTC: the file times are right even if the time zone of the remote
+  host differs (a server running in UTC, for example), and keep the seconds
+  (upstream ticket #5059; needs perl on the host).
 
 ### SFTP and FTP
 
 * sftp: directory cache like the other network file systems (upstream PR #5180),
   default key files and rsa-sha2 host keys, no failure on a write not yet
   acknowledged.
+* sftp: keyboard-interactive authentication shows the prompts of the server
+  (one-time codes too) (upstream PR #5162).
 * ftp: reconnect after the idle timeout of the server, remembering the password.
 
 ### Viewer (mcview)
@@ -76,6 +81,8 @@ For every push to `master` the following are published:
 
 ### File manager
 
+* Alt-Enter in the destination field of the copy/move dialog inserts the name of
+  the source file (upstream PR #5195).
 * `cd` on the command line expands shell wildcards: `cd fo*`, `cd s*/i*2`
   (upstream PR #5210).
 * The size of the current file is shown above the mini status line; the mini
