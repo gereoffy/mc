@@ -950,8 +950,8 @@ sftpfs_open_connection_ssh_password (struct vfs_s_super *super, GError **mcerror
         if (attempt == 0)
             p = g_strdup_printf (_ ("sftp: Enter password for %s "), super->path_element->user);
         else
-            p = g_strdup_printf (_ ("Permission denied, please try again.\n"
-                                    "sftp: Enter password for %s "),
+            // the prompt is the title of the dialog: one line
+            p = g_strdup_printf (_ ("sftp: Wrong password, enter password for %s again "),
                                  super->path_element->user);
         passwd = vfs_get_password (p);
         g_free (p);
