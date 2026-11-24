@@ -62,7 +62,9 @@ For every push to `master` the following are published:
   default key files and rsa-sha2 host keys, no failure on a write not yet
   acknowledged.
 * sftp: keyboard-interactive authentication shows the prompts of the server
-  (one-time codes too) (upstream PR #5162).
+  (one-time codes too) (upstream PR #5162); a wrong password is asked again
+  (three times, as ssh does), a failed login tells "authentication failed",
+  and a cancelled password input just returns, without error messages.
 * ftp: reconnect after the idle timeout of the server, remembering the password.
 
 ### Viewer (mcview)
