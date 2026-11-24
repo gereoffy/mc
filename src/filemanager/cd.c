@@ -460,6 +460,10 @@ cd_to (const char *path)
 void
 cd_error_message (const char *path)
 {
+    // the user cancelled it (a password input of a network file system, for example)
+    if (errno == ECANCELED)
+        return;
+
     file_error_message (_ ("Cannot change directory to\n%s"), path);
 }
 
